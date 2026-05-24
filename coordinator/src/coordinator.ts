@@ -8,6 +8,7 @@ import {
 } from "./agents.js";
 import { OPERATORS } from "./parser.js";
 import { model } from "./config.js";
+import { VALIDATE_TOOL } from "./validatorTool.js";
 
 export interface CoordinatorResult {
   /** The raw final text from the coordinator. */
@@ -56,8 +57,9 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     systemPrompt: coordinatorSystemPrompt(),
     mcpServers: mcpServers(),
     agents: specialistAgents(),
-    // The coordinator may only delegate; specialists own the comparator tools.
-    allowedTools: ["Task", ...OPERATORS.map((op) => toolName(op.canonical))],
+    // The coordinator delegates boolean comparisons (Task -> specialists own the
+    // comparator tools) and makes decisions itself via the in-process validator.
+    allowedTools: ["Task", VALIDATE_TOOL, ...OPERATORS.map((op) => toolName(op.canonical))],
     permissionMode: "bypassPermissions",
     maxTurns: 10,
   };

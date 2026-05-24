@@ -4,6 +4,8 @@ import { directEvaluate } from "./mcpClient.js";
 import { OPERATORS, parseExpression } from "./parser.js";
 import { serverBinary, model } from "./config.js";
 import { ensureServerReady } from "./bootstrap.js";
+import { validate, type Goal } from "./validator.js";
+import { COMPARATOR_NAMES, type ComparatorName } from "./cmp/index.js";
 
 const PROMPT = ">>> ";
 let showTrace = true;
@@ -18,13 +20,18 @@ function help(): void {
   console.log(
     [
       "Commands:",
-      "  <lhs> <op> <rhs>   Route through the coordinator -> comparator specialist (uses the model).",
-      "  :direct <expr>     Evaluate by calling the Go server directly (no model, no tokens).",
-      "  :parse  <expr>     Show how an expression is parsed locally.",
-      "  :ops               List the supported operators.",
-      "  :trace [on|off]    Toggle delegation trace for coordinator runs.",
-      "  :help              Show this help.",
-      "  :quit | :exit      Leave the REPL (Ctrl-D also works).",
+      "  <text>                          Ask the coordinator (uses the model). It either answers a",
+      "                                  boolean comparison or makes a decision, e.g.:",
+      '                                    "is 12 greater than 14?"   -> false',
+      '                                    "which is bigger, 12 or 14?" -> 14',
+      "  :direct <expr>                  Boolean compare via the Go server directly (no model).",
+      "  :validate <kind> <goal> <a> <b> Decide locally via the validator (no model). kind=numeric|alpha,",
+      "                                  goal=max|min. Prints -1 (a better) / +1 (b better) / 0 (tie).",
+      "  :parse  <expr>                  Show how an expression is parsed locally.",
+      "  :ops                            List the supported operators.",
+      "  :trace [on|off]                 Toggle delegation trace for coordinator runs.",
+      "  :help                           Show this help.",
+      "  :quit | :exit                   Leave the REPL (Ctrl-D also works).",
       "",
       "Operators accept keyword or symbol forms, e.g. GT or >, NEQ or != .",
     ].join("\n"),
@@ -62,11 +69,40 @@ async function runCoordinator(expr: string): Promise<void> {
     console.log(`  error: ${result.error}`);
     return;
   }
-  if (result.value === null) {
-    console.log(`  (no boolean parsed) raw: ${JSON.stringify(result.raw)}`);
+  // Boolean comparisons resolve to true/false; decisions (and clarifying
+  // questions) come back as free text — print whichever we got.
+  if (result.value !== null) {
+    console.log(`  ${result.value}`);
+  } else if (result.raw.trim() !== "") {
+    console.log(`  ${result.raw.trim()}`);
+  } else {
+    console.log("  (no answer)");
+  }
+}
+
+function runValidate(rest: string): void {
+  const parts = rest.split(/\s+/).filter(Boolean);
+  if (parts.length !== 4) {
+    console.log("  usage: :validate <numeric|alpha> <max|min> <lhs> <rhs>");
     return;
   }
-  console.log(`  ${result.value}`);
+  const [comparator, goal, lhs, rhs] = parts;
+  if (!COMPARATOR_NAMES.includes(comparator as ComparatorName)) {
+    console.log(`  unknown comparator "${comparator}" (use: ${COMPARATOR_NAMES.join(", ")})`);
+    return;
+  }
+  if (goal !== "max" && goal !== "min") {
+    console.log(`  goal must be "max" or "min"`);
+    return;
+  }
+  try {
+    const v = validate(lhs, rhs, comparator as ComparatorName, goal as Goal);
+    const sign = v.verdict > 0 ? "+1" : v.verdict < 0 ? "-1" : "0";
+    const better = v.winner === "tie" ? "tie" : v.winner === "lhs" ? lhs : rhs;
+    console.log(`  verdict ${sign}  (better: ${better})`);
+  } catch (err) {
+    console.log(`  error: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 async function dispatch(line: string): Promise<void> {
@@ -98,6 +134,10 @@ async function dispatch(line: string): Promise<void> {
 
   if (input.startsWith(":direct")) {
     return runDirect(input.slice(":direct".length).trim());
+  }
+
+  if (input.startsWith(":validate")) {
+    return runValidate(input.slice(":validate".length).trim());
   }
 
   if (input.startsWith(":")) {
