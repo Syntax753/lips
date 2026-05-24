@@ -8,12 +8,16 @@ import { decide, type Goal } from "./cmp/decide.js";
 import { COMPARATOR_NAMES, type ComparatorName } from "./cmp/index.js";
 
 const PROMPT = ">>> ";
+const CONT = "... ";
+/** When non-null, we're collecting a multiline block; a blank line submits it. */
+let collecting: string[] | null = null;
 
 function banner(): void {
   console.log("lips — symbolic-logic coordinator REPL");
   console.log(`coordinator model: ${model}   server: ${serverBinary}`);
   console.log("Ask in plain language — a comparison, a decision, or a word problem,");
   console.log('e.g. "is twelve greater than fourteen?" or "which is bigger, 12 or 14?".');
+  console.log("For multiline input (e.g. an ASCII game grid), type :ml then a blank line to submit.");
   console.log(":help for commands, :quit to exit.");
 }
 
@@ -31,6 +35,8 @@ function help(): void {
       "                                  Prints -1 (a better) / +1 (b better) / 0 (tie).",
       "  :parse  <expr>                  Show how an expression is parsed locally.",
       "  :ops                            List the supported operators.",
+      "  :ml | :multi | :grid            Start a multiline block (e.g. an ASCII grid); a blank line",
+      "                                  submits it, :cancel aborts.",
       "  :help                           Show this help.",
       "  :quit | :exit                   Leave the REPL (Ctrl-D also works).",
       "",
@@ -129,6 +135,38 @@ async function dispatch(line: string): Promise<void> {
   await runCoordinator(input);
 }
 
+/**
+ * Top-level line handler. Outside multiline mode it dispatches commands; the
+ * `:ml` family starts a multiline block. Inside multiline mode every line is
+ * accumulated until a blank line (submit) or `:cancel` (abort).
+ */
+async function onLine(line: string): Promise<void> {
+  if (collecting !== null) {
+    const trimmed = line.trim();
+    if (trimmed === ":cancel") {
+      collecting = null;
+      console.log("  (multiline cancelled)");
+      return;
+    }
+    if (trimmed === "") {
+      const text = collecting.join("\n");
+      collecting = null;
+      if (text.trim() !== "") await runCoordinator(text);
+      return;
+    }
+    collecting.push(line);
+    return;
+  }
+
+  if ([":ml", ":multi", ":grid", ":state"].includes(line.trim())) {
+    collecting = [];
+    console.log("  multiline mode: enter your text (e.g. an ASCII grid), blank line submits, :cancel aborts.");
+    return;
+  }
+
+  await dispatch(line);
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -139,9 +177,12 @@ rl.pause();
 
 rl.on("line", (line) => {
   rl.pause();
-  dispatch(line)
+  onLine(line)
     .catch((err) => console.log(`  unexpected error: ${err instanceof Error ? err.message : String(err)}`))
-    .finally(() => rl.prompt()); // prompt() also resumes the paused input
+    .finally(() => {
+      rl.setPrompt(collecting !== null ? CONT : PROMPT);
+      rl.prompt(); // prompt() also resumes the paused input
+    });
 });
 
 rl.on("close", () => {

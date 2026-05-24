@@ -1,11 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
-import {
-  coordinatorSystemPrompt,
-  mcpServers,
-  specialistAgents,
-  specialistToolNames,
-} from "./agents.js";
+import { coordinatorSystemPrompt, mcpServers, specialistAgents } from "./agents.js";
 import { model } from "./config.js";
 
 /**
@@ -215,11 +210,10 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     systemPrompt: coordinatorSystemPrompt(),
     mcpServers: mcpServers(),
     agents: specialistAgents(),
-    // The coordinator may only spawn specialists. disallowedTools hides the
-    // leaf tools from its tool list so it won't even attempt a direct call;
-    // canUseTool is the backstop (denies any that slip through). Specialists
-    // own their tools via their own agent definitions, unaffected by this.
-    disallowedTools: specialistToolNames(),
+    // The coordinator may only spawn specialists; canUseTool denies any direct
+    // tool call (specialists, with agentID set, run their tools normally).
+    // NOTE: disallowedTools is NOT used here — it applies globally and would
+    // also strip the tools from the specialists, breaking them.
     canUseTool,
     permissionMode: "default",
     maxTurns: 20,

@@ -56,24 +56,6 @@ export function specialistId(canonical: string): string {
 }
 
 /**
- * Every leaf tool — all owned by specialists, none by the coordinator. Passed
- * as the coordinator's `disallowedTools` so they don't even appear in its tool
- * list (it sees only Task), which stops it from attempting a direct call.
- */
-export function specialistToolNames(): string[] {
-  return [
-    ...OPERATORS.map((op) => toolName(op.canonical)),
-    DECIDE_TOOL,
-    ALGEBRAIC_TOOL,
-    STATEMACHINE_TOOL,
-    COMPARABLE_TOOL,
-    GRIDVALID_TOOL,
-    ...ARITHMETIC_TOOLS,
-    ...CONVERTER_TOOLS,
-  ];
-}
-
-/**
  * Specialists the coordinator delegates to via Task. Each owns exactly the
  * tools for its job (the `tools` allow-list); the coordinator itself owns none.
  * One short-lived comparator specialist per operator, plus a specialist for
@@ -199,7 +181,8 @@ export function coordinatorSystemPrompt(): string {
     "",
     "NARRATE: right before each Task, output ONE short sentence saying what you are delegating and why.",
     "",
-    "SPECIALISTS (spawn via Task; state the operands explicitly, e.g. \"lhs=12, rhs=14\"):",
+    "SPECIALISTS — for each unit of work spawn the NAMED specialist below via Task (use its exact",
+    'subagent_type; never a general-purpose agent). State the operands explicitly (e.g. "lhs=12, rhs=14"):',
     "",
     '  TRUTH — a yes/no question about two numbers ("is a > b", "a == b", "a <= b"):',
     routing,
@@ -220,9 +203,11 @@ export function coordinatorSystemPrompt(): string {
     `  EVALUATE — unsure whether two values can be compared at all:`,
     `         -> "${EVALUATOR_SPECIALIST}"  (returns ok + a suggested converter when not comparable).`,
     "",
-    `  STATE / GRID — the input is a game state as an ASCII grid (rows of '.', '@', etc.):`,
+    `  STATE / GRID — the input is (or contains) a game state as an ASCII grid (rows of '.', '@', etc.):`,
     `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states for the ruleset, default`,
     "            sokoban). Just relay the full list of resulting grids; do not move pieces yourself.",
+    "            If a grid arrives with NO other instruction, DEFAULT to listing all next states",
+    "            (do not ask what to do).",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",
