@@ -9,38 +9,34 @@ import { COMPARATOR_NAMES, type ComparatorName } from "./cmp/index.js";
 
 const PROMPT = ">>> ";
 const CONT = "... ";
-/** When non-null, we're collecting a multiline block; a blank line submits it. */
-let collecting: string[] | null = null;
+/** Lines accumulated for the current input; a blank line submits the block. */
+const buffer: string[] = [];
 
 function banner(): void {
   console.log("lips — symbolic-logic coordinator REPL");
   console.log(`coordinator model: ${model}   server: ${serverBinary}`);
-  console.log("Ask in plain language — a comparison, a decision, or a word problem,");
-  console.log('e.g. "is twelve greater than fourteen?" or "which is bigger, 12 or 14?".');
-  console.log("For multiline input (e.g. an ASCII game grid), type :ml then a blank line to submit.");
-  console.log(":help for commands, :quit to exit.");
+  console.log("Type a question or paste a grid over one or more lines, then a BLANK line to run it.");
+  console.log('e.g. "is twelve greater than fourteen?", Enter, then Enter again on a blank line.');
+  console.log("Commands start with ':' (e.g. :help, :quit) and run on their own line.");
 }
 
 function help(): void {
   console.log(
     [
       "Commands:",
-      "  <text>                          Ask the coordinator (uses the model): a comparison, a decision,",
-      "                                  or a word problem / system of equations. e.g.:",
-      '                                    "is 12 greater than 14?"          -> false',
-      '                                    "which is bigger, 12 or 14?"      -> 14',
-      '                                    "I am four times my nephew\'s age..." -> solves the system',
+      "  <text…>                         Your input over one or more lines (a question, or paste a grid).",
+      "                                  A BLANK line submits the block to the coordinator; :cancel clears it.",
+      '                                    "is 12 greater than 14?" + blank line   -> false',
+      "                                    paste a grid + blank line               -> all next states",
       "  :direct <expr>                  Boolean compare via the Go server directly (no model).",
       "  :decide <kind> <goal> <a> <b>   Decide locally (no model). kind=numeric|alpha, goal=max|min.",
       "                                  Prints -1 (a better) / +1 (b better) / 0 (tie).",
       "  :parse  <expr>                  Show how an expression is parsed locally.",
       "  :ops                            List the supported operators.",
-      "  :ml | :multi | :grid            Start a multiline block (e.g. an ASCII grid); a blank line",
-      "                                  submits it, :cancel aborts.",
       "  :help                           Show this help.",
       "  :quit | :exit                   Leave the REPL (Ctrl-D also works).",
       "",
-      "Tool calls are always shown (· lines) so you can see the delegation as it happens.",
+      "Commands (lines starting with ':') run immediately. Everything else accumulates until a blank line.",
       "Operators accept keyword or symbol forms, e.g. GT or >, NEQ or != .",
     ].join("\n"),
   );
@@ -141,30 +137,26 @@ async function dispatch(line: string): Promise<void> {
  * accumulated until a blank line (submit) or `:cancel` (abort).
  */
 async function onLine(line: string): Promise<void> {
-  if (collecting !== null) {
-    const trimmed = line.trim();
-    if (trimmed === ":cancel") {
-      collecting = null;
-      console.log("  (multiline cancelled)");
-      return;
-    }
-    if (trimmed === "") {
-      const text = collecting.join("\n");
-      collecting = null;
-      if (text.trim() !== "") await runCoordinator(text);
-      return;
-    }
-    collecting.push(line);
+  // At the start of a fresh input, a ':' line is a command and runs immediately.
+  if (buffer.length === 0 && line.trim().startsWith(":")) {
+    await dispatch(line);
     return;
   }
-
-  if ([":ml", ":multi", ":grid", ":state"].includes(line.trim())) {
-    collecting = [];
-    console.log("  multiline mode: enter your text (e.g. an ASCII grid), blank line submits, :cancel aborts.");
+  // Mid-block, :cancel discards what's been typed so far.
+  if (buffer.length > 0 && line.trim() === ":cancel") {
+    buffer.length = 0;
+    console.log("  (input cleared)");
     return;
   }
-
-  await dispatch(line);
+  // A blank line submits the accumulated block.
+  if (line.trim() === "") {
+    if (buffer.length === 0) return;
+    const text = buffer.join("\n");
+    buffer.length = 0;
+    await runCoordinator(text);
+    return;
+  }
+  buffer.push(line);
 }
 
 const rl = readline.createInterface({
@@ -180,7 +172,7 @@ rl.on("line", (line) => {
   onLine(line)
     .catch((err) => console.log(`  unexpected error: ${err instanceof Error ? err.message : String(err)}`))
     .finally(() => {
-      rl.setPrompt(collecting !== null ? CONT : PROMPT);
+      rl.setPrompt(buffer.length > 0 ? CONT : PROMPT);
       rl.prompt(); // prompt() also resumes the paused input
     });
 });
