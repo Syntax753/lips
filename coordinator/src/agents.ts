@@ -10,27 +10,27 @@ import { evaluatorsServer, EVALUATORS_SERVER, COMPARABLE_TOOL } from "./evaluato
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
 
-/** The fully-qualified tool name as seen by the agent runtime. */
+/** The fully-qualified comparator tool name (e.g. mcp__comparators__gt). */
 export function toolName(canonical: string): string {
   return `mcp__${MCP_SERVER_NAME}__${canonical}`;
 }
 
-/** The Go comparator server, registered per-specialist (not on the coordinator). */
-function comparatorServerSpec() {
-  return { [MCP_SERVER_NAME]: { type: "stdio" as const, command: serverBinary, args: [] } };
-}
+// Capability specialist ids.
+export const ARITHMETIC_SPECIALIST = "arithmetic-specialist";
+export const DECISION_SPECIALIST = "decision-specialist";
+export const ALGEBRA_SPECIALIST = "algebra-specialist";
+export const CONVERTER_SPECIALIST = "converter-specialist";
+export const EVALUATOR_SPECIALIST = "evaluator-specialist";
 
 /**
- * MCP servers available to the COORDINATOR:
- *  - decision (in-process) — "which is better" (comparator + goal);
- *  - delegator (in-process) — domain solvers; today the algebraic delegator.
- *
- * The Go comparators server is deliberately NOT here — it is registered only on
- * the specialist agents (see specialistAgents), so a boolean truth can only be
- * resolved by delegating to a specialist, never by the coordinator directly.
+ * Every tool server is registered here, session-wide. The coordinator is still
+ * prevented from calling any of them directly — see the canUseTool gate in
+ * coordinator.ts, which allows non-Task tools only from inside a subagent. Each
+ * specialist is further restricted to its own tools via its agent definition.
  */
 export function mcpServers(): Record<string, McpServerConfig> {
   return {
+    [MCP_SERVER_NAME]: { type: "stdio", command: serverBinary, args: [] },
     [DECISION_SERVER]: decisionServer(),
     [DELEGATOR_SERVER]: delegatorServer(),
     [OPS_SERVER]: arithmeticServer(),
@@ -39,33 +39,16 @@ export function mcpServers(): Record<string, McpServerConfig> {
   };
 }
 
-/**
- * Tools the coordinator itself may call. The boolean comparator tools are
- * deliberately NOT here: a truth must be delegated to a specialist (via Task),
- * which owns its single comparator tool through its agent definition. This
- * keeps the call tree consistently coordinator -> Agent -> comparator tool.
- */
-export function allowedToolNames(): string[] {
-  return [
-    "Task",
-    DECIDE_TOOL,
-    ALGEBRAIC_TOOL,
-    COMPARABLE_TOOL,
-    ...ARITHMETIC_TOOLS,
-    ...CONVERTER_TOOLS,
-  ];
-}
-
 /** Subagent id for a given comparator (e.g. "gt" -> "gt-specialist"). */
 export function specialistId(canonical: string): string {
   return `${canonical}-specialist`;
 }
 
 /**
- * One short-lived specialist per comparator. Each is restricted (via `tools`)
- * to exactly its own MCP tool, so it can do nothing but evaluate that single
- * operator. The Task tool spawns a fresh instance on demand and discards it
- * once it returns — the "distributed worker" of the design.
+ * Specialists the coordinator delegates to via Task. Each owns exactly the
+ * tools for its job (the `tools` allow-list); the coordinator itself owns none.
+ * One short-lived comparator specialist per operator, plus a specialist for
+ * each other capability.
  */
 export function specialistAgents(): Record<string, AgentDefinition> {
   const agents: Record<string, AgentDefinition> = {};
@@ -73,31 +56,86 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   for (const op of OPERATORS) {
     const tool = toolName(op.canonical);
     agents[specialistId(op.canonical)] = {
-      description: `Evaluates ${op.label} (${op.keyword}) comparisons of two numbers. Use for: ${[...op.synonyms, ...op.forms].join(", ")}.`,
+      description: `Evaluates ${op.label} (${op.keyword}) of two numbers. Use for: ${[...op.synonyms, ...op.forms].join(", ")}.`,
       prompt: [
         `You are the ${op.label.toUpperCase()} (${op.keyword}) specialist.`,
-        `You will be given two numeric operands, lhs and rhs.`,
-        `Call the \`${tool}\` tool exactly once with {"lhs": <number>, "rhs": <number>}.`,
-        `Do NOT compute the comparison yourself — trust the tool's result.`,
-        `Reply with ONLY the lowercase word it yields: \`true\` or \`false\`. No other text.`,
+        `Call \`${tool}\` exactly once with {"lhs": <number>, "rhs": <number>}.`,
+        `Do NOT compute the comparison yourself. Reply with ONLY \`true\` or \`false\`.`,
       ].join(" "),
       tools: [tool],
-      // The comparators server is scoped to the specialist, so only it (not the
-      // coordinator) can reach the Go comparator tools.
-      mcpServers: [comparatorServerSpec()],
       model,
-      // A specialist needs at most: one tool call + one summarising turn.
       maxTurns: 3,
     };
   }
+
+  agents[ARITHMETIC_SPECIALIST] = {
+    description: "Calculates with numbers: multiply, add, subtract, divide.",
+    prompt: [
+      "You perform arithmetic.",
+      `Call the matching tool (mcp__${OPS_SERVER}__multiply / __add / __subtract / __divide) with the`,
+      "two operands. If given a multi-step calculation, chain the tools, feeding each result into the",
+      "next. Never calculate in your head. Reply with ONLY the final number.",
+    ].join(" "),
+    tools: [...ARITHMETIC_TOOLS],
+    model,
+    maxTurns: 8,
+  };
+
+  agents[DECISION_SPECIALIST] = {
+    description: "Decides which of two values is better (numbers, text, or outcome objects).",
+    prompt: [
+      "You make a single decision.",
+      `Call \`${DECIDE_TOOL}\` with lhs, rhs, comparator ("numeric" | "alpha" | "outcome") and goal`,
+      '("max" | "min"). Reply with the better value, or "tie".',
+    ].join(" "),
+    tools: [DECIDE_TOOL],
+    model,
+    maxTurns: 3,
+  };
+
+  agents[ALGEBRA_SPECIALIST] = {
+    description: "Solves a system of linear equations.",
+    prompt: [
+      "You solve linear systems.",
+      `Call \`${ALGEBRAIC_TOOL}\` once with { equations: [...] }.`,
+      "Reply with the solved value(s), or the reason it is not solvable.",
+    ].join(" "),
+    tools: [ALGEBRAIC_TOOL],
+    model,
+    maxTurns: 3,
+  };
+
+  agents[CONVERTER_SPECIALIST] = {
+    description: "Converts a value's data type (number-word/digits -> int, JSON -> id field).",
+    prompt: [
+      "You convert data types.",
+      `Use \`${CONVERTER_TOOLS[0]}\` for a number-word or digit string -> integer, and`,
+      `\`${CONVERTER_TOOLS[1]}\` to pull an id field out of a JSON object. Reply with ONLY the result.`,
+    ].join(" "),
+    tools: [...CONVERTER_TOOLS],
+    model,
+    maxTurns: 3,
+  };
+
+  agents[EVALUATOR_SPECIALIST] = {
+    description: "Checks whether two values can be compared under a comparator.",
+    prompt: [
+      "You evaluate comparability.",
+      `Call \`${COMPARABLE_TOOL}\` with lhs, rhs, comparator. Reply with ok and, if not ok, the`,
+      "suggested converter.",
+    ].join(" "),
+    tools: [COMPARABLE_TOOL],
+    model,
+    maxTurns: 3,
+  };
 
   return agents;
 }
 
 /**
- * System prompt for the coordinator (main agent). It must not compute anything
- * itself: parse the operator, delegate to the matching specialist via the Task
- * tool, and surface the boolean.
+ * System prompt for the coordinator. Its ONLY tool is Task: it delegates every
+ * unit of work to a specialist and composes the results. It never calls a
+ * comparison / arithmetic / algebra / conversion tool itself.
  */
 export function coordinatorSystemPrompt(): string {
   const routing = OPERATORS.map(
@@ -106,79 +144,45 @@ export function coordinatorSystemPrompt(): string {
   ).join("\n");
 
   return [
-    "You are a symbolic-logic ORCHESTRATOR. Your job is to DECOMPOSE the user's request into atomic",
-    "symbolic truths, DELEGATE the work to tools, and COMPOSE the results into the answer.",
+    "You are a symbolic-logic ORCHESTRATOR. You DECOMPOSE the request, DELEGATE every unit of work to a",
+    "specialist via the Task tool, and COMPOSE their results into the answer.",
     "",
-    "HARD RULE — you NEVER compare, do algebra, or do arithmetic yourself. You must not decide whether",
-    "one value is greater/smaller/equal/better, isolate or solve a variable, or multiply/add numbers, by",
-    "your own reasoning. Every comparison, derivation, and calculation MUST go to a tool. Your own work",
-    "is limited to: classifying, decomposition, delegation, and composition (boolean logic AND / OR /",
-    "NOT, picking an extreme, ordering, counting, and chaining one tool's result into the next).",
+    "HARD RULE — Task is your ONLY tool. You never call a comparison, arithmetic, algebra, conversion or",
+    "evaluation tool yourself, and you never compute/compare/convert in your head (not even 4 + 2). For",
+    "EVERY such step, spawn the matching specialist via Task and use exactly what it returns. Your own",
+    "work is limited to: classifying, decomposing, delegating, and composing (boolean AND / OR / NOT,",
+    "picking an extreme, and chaining one specialist's result into the next Task).",
     "",
-    "NARRATE everything: right before each tool call, output ONE short sentence saying what you are",
-    "delegating and why — the user watches these explanations.",
+    "NARRATE: right before each Task, output ONE short sentence saying what you are delegating and why.",
     "",
-    "CLASSIFY each glyph and each tool response, and route it by its type (independent parts may be",
-    "delegated in parallel):",
-    "  [USR] raw input            -> analyse and decompose it.",
-    "  [RDR] needs reducing       -> equations/unknowns; hand the whole list to the algebra delegator.",
-    "  [CMP] {lhs, rhs, comparator}-> send to the matching comparator (a TRUTH) to get true/false.",
+    "SPECIALISTS (spawn via Task; state the operands explicitly, e.g. \"lhs=12, rhs=14\"):",
     "",
-    "NORMALISE TYPES first. A tool needs its operands in the right form. If an operand is a number",
-    "word (\"twelve\") or a JSON object, CONVERT it before comparing/calculating, then chain the result:",
-    `    \`${CONVERTER_TOOLS[0]}\` — string (word or digits) -> integer;`,
-    `    \`${CONVERTER_TOOLS[1]}\` — pull an id field out of a JSON object -> string.`,
-    `  If unsure whether two values can be compared, call \`${COMPARABLE_TOOL}\` first; it returns ok plus`,
-    "  a suggested converter when they are not directly comparable.",
-    "",
-    "For each atomic comparison, pick the delegate by its KIND:",
-    "",
-    '  • TRUTH — a yes/no question about the ordering of two numbers ("is a > b", "a == b", "a <= b").',
-    "    Delegate to the matching specialist via the Task tool, stating the operands explicitly",
-    '    (e.g. "lhs=12, rhs=14"). The specialist replies true or false.',
+    '  TRUTH — a yes/no question about two numbers ("is a > b", "a == b", "a <= b"):',
     routing,
     "",
-    '  • DECISION — which of two values is better / which to pick ("which is bigger", "the smaller of",',
-    '    "which comes first alphabetically", "which strategy is best").',
-    `    Call the \`${DECIDE_TOOL}\` tool with: lhs, rhs, comparator, and goal.`,
-    '    comparator = "numeric" (numbers), "alpha" (text), or "outcome" for JSON objects',
-    '    {expectedValue, survivalProbability} (survival ranked first, then value).',
-    '    goal = "max" (larger/later/better wins) or "min" (smaller/earlier wins).',
-    "    It returns -1 (lhs is better), +1 (rhs is better), or 0 (equal). For 3+ candidates, compare",
-    "    pairwise and keep the winner.",
+    `  DECISION — which of two values is better ("bigger", "smaller", "first alphabetically", "best"):`,
+    `         -> "${DECISION_SPECIALIST}"  (it takes comparator numeric/alpha/outcome and goal max/min;`,
+    "            outcome ranks JSON {expectedValue, survivalProbability}, survival first).",
     "",
-    "  • DERIVATION [RDR] — the request implies equations / unknowns (word problems, systems).",
-    "    Translate the statement into linear equations (interpretation only, not computation),",
-    '    e.g. "I am four times his age" -> "M = 4*T". Then hand the WHOLE list to the algebra delegator:',
-    `      Call \`${ALGEBRAIC_TOOL}\` once with { equations: [...] }. It preflights, reduces and solves`,
-    "      deterministically and returns { ok, solution, comparables, steps }.",
-    "      - If ok=false, report the reason and stop.",
-    "      - `comparables` are [CMP] items; to confirm the solution, send them to the comparator",
-    "        specialists (Task) — independent ones in parallel.",
-    "      - ok=true means the system was SOLVED (not merely 'solvable') — report the value(s) from",
-    '        `solution` (e.g. Tony\'s age); never answer just "true"/"false" for a derivation.',
+    `  ARITHMETIC — multiply / add / subtract / divide numbers (every step, even 4 + 2):`,
+    `         -> "${ARITHMETIC_SPECIALIST}"  (delegate each operation; chain for multi-step formulas).`,
     "",
-    "  • ARITHMETIC — calculate with numbers: multiply / add / subtract / divide.",
-    `    Call the matching tool (mcp__${OPS_SERVER}__multiply / __add / __subtract / __divide) with two`,
-    "    operands. For 3+ operands or a multi-step formula (e.g. an expected value = sum of",
-    "    value*probability terms), CHAIN the calls, feeding each result into the next.",
-    `    To then choose the best of several COMPUTED outcomes, compare them with \`${DECIDE_TOOL}\``,
-    "    (there is no separate outcome comparator). Never calculate in your head.",
+    `  DERIVATION — equations / word problems / systems of unknowns:`,
+    `         -> "${ALGEBRA_SPECIALIST}"  (translate the statement into linear equations and pass the list).`,
     "",
-    "Use your language understanding to break the request into sub-problems, and judge how they relate:",
-    "  - PARALLEL (independent) — delegate them together in ONE turn (emit the tool calls at once),",
-    '    then compose. e.g. "is 5 > 3 and 2 < 1?" -> truth(5>3) ‖ truth(2<1) in parallel, then AND.',
-    "  - LINEAR (dependent) — each step needs the previous result, so delegate in sequence, feeding",
-    '    results forward. e.g. "is the larger of 3 and 8 over 5?" -> DECISION(max of 3,8)=8, THEN TRUTH(8 > 5).',
-    '  - Many requests mix both: parallel branches that later join. e.g. "which is biggest: 12, 14, 9?"',
-    "    -> run the pairwise DECISIONS, then pick the maximum.",
-    "Only serialise when a step truly depends on an earlier result; otherwise delegate concurrently.",
+    `  CONVERT — a number word ("twelve") or a JSON object that must become a comparable scalar:`,
+    `         -> "${CONVERTER_SPECIALIST}"  (do this FIRST, then chain the converted value onward).`,
     "",
-    'Resolve number words ("twelve" -> 12); the lhs is the value mentioned first. If a comparison needs',
-    'numbers that were not given (bare variables like "a > b"), briefly ask for them and stop.',
+    `  EVALUATE — unsure whether two values can be compared at all:`,
+    `         -> "${EVALUATOR_SPECIALIST}"  (returns ok + a suggested converter when not comparable).`,
     "",
-    "OUTPUT: a single truth -> reply ONLY `true`/`false`; a single decision -> reply with the better",
-    "value (or `tie`); a derivation/compound request -> reply with the final answer concisely, and",
-    "flag any value that breaks a real-world constraint (e.g. a negative age).",
+    "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
+    "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",
+    'e.g. "is 5 > 3 and 2 < 1?" -> gt(5,3) || lt(2,1) in parallel, then AND.',
+    'e.g. "is the larger of 3 and 8 over 5?" -> DECISION(max of 3,8)=8, THEN TRUTH(8 > 5).',
+    "",
+    "OUTPUT: a single truth -> reply ONLY `true`/`false`; a single decision -> the better value (or",
+    "`tie`); a derivation/compound -> the final answer concisely, flagging any value that breaks a",
+    'real-world limit (e.g. a negative age). If needed numbers are missing (bare "a > b"), ask and stop.',
   ].join("\n");
 }

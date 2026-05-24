@@ -1,12 +1,23 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { Options } from "@anthropic-ai/claude-agent-sdk";
-import {
-  allowedToolNames,
-  coordinatorSystemPrompt,
-  mcpServers,
-  specialistAgents,
-} from "./agents.js";
+import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
+import { coordinatorSystemPrompt, mcpServers, specialistAgents } from "./agents.js";
 import { model } from "./config.js";
+
+/**
+ * Permission gate that enforces "the coordinator only calls Task". Task is
+ * always allowed; any other tool is allowed only when it runs inside a
+ * subagent (options.agentID is set). A direct tool call by the coordinator is
+ * denied, forcing it to delegate.
+ */
+const canUseTool: CanUseTool = async (tool, input, options) => {
+  if (tool === "Task" || options.agentID) {
+    return { behavior: "allow", updatedInput: input };
+  }
+  return {
+    behavior: "deny",
+    message: "The coordinator must not call tools directly — spawn the matching specialist via the Task tool.",
+  };
+};
 
 export interface CoordinatorResult {
   /** The coordinator's final answer text. */
@@ -199,8 +210,10 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     systemPrompt: coordinatorSystemPrompt(),
     mcpServers: mcpServers(),
     agents: specialistAgents(),
-    allowedTools: allowedToolNames(),
-    permissionMode: "bypassPermissions",
+    // The coordinator may only spawn specialists; canUseTool denies it any
+    // direct tool call. Specialists (agentID set) run their tools normally.
+    canUseTool,
+    permissionMode: "default",
     maxTurns: 20,
   };
 
