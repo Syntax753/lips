@@ -12,12 +12,12 @@ export const DECIDE_TOOL = `mcp__${DECISION_SERVER}__decide`;
 
 export const decideTool = tool(
   "decide",
-  "Decide which of two values is better. Returns -1 (lhs better), +1 (rhs better), or 0 (equal). comparator='numeric' for numbers or 'alpha' for text; goal='max' (larger/later is better) or 'min' (smaller/earlier is better).",
+  "Decide which of two values is better. Returns -1 (lhs better), +1 (rhs better), or 0 (equal). comparator='numeric' for numbers, 'alpha' for text, or 'outcome' for JSON objects {expectedValue, survivalProbability} (survival ranked first). goal='max' (larger/later/better is better) or 'min' (smaller/earlier is better).",
   {
-    lhs: z.string().describe("the first value"),
-    rhs: z.string().describe("the second value"),
-    comparator: z.enum(["numeric", "alpha"]).describe("numbers or alphabetical text"),
-    goal: z.enum(["max", "min"]).describe("max = larger/later better, min = smaller/earlier better"),
+    lhs: z.string().describe("the first value (a JSON object for the 'outcome' comparator)"),
+    rhs: z.string().describe("the second value (a JSON object for the 'outcome' comparator)"),
+    comparator: z.enum(["numeric", "alpha", "outcome"]).describe("numbers, alphabetical text, or outcome objects"),
+    goal: z.enum(["max", "min"]).describe("max = larger/later/better wins, min = smaller/earlier wins"),
   },
   async (args) => {
     try {

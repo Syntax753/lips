@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { multiply } from "./arithmetic.js";
+import { calc, multiply } from "./arithmetic.js";
 
-test("numeric multiply", () => {
-  assert.equal(multiply("7", "7").product, "49");
-  assert.equal(multiply("49", "14").product, "686");
-  assert.equal(multiply("-5", "4").product, "-20");
+test("numeric arithmetic ops", () => {
+  assert.equal(multiply("7", "7").result, "49");
+  assert.equal(calc("add", "49", "14").result, "63");
+  assert.equal(calc("subtract", "100", "10").result, "90");
+  assert.equal(calc("divide", "20", "4").result, "5");
 });
 
-test("rejects non-numbers", () => {
+test("guards", () => {
+  assert.throws(() => calc("divide", "1", "0"), /division by zero/);
   assert.throws(() => multiply("a", "2"), /not a number/);
 });

@@ -3,7 +3,9 @@ import { serverBinary, model } from "./config.js";
 import { OPERATORS } from "./parser.js";
 import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
 import { delegatorServer, DELEGATOR_SERVER, ALGEBRAIC_TOOL } from "./delegator/index.js";
-import { arithmeticServer, OPS_SERVER, MULTIPLY_TOOL } from "./ops/arithmetic.js";
+import { arithmeticServer, OPS_SERVER, ARITHMETIC_TOOLS } from "./ops/arithmetic.js";
+import { convertersServer, CONVERTERS_SERVER, CONVERTER_TOOLS } from "./converters/index.js";
+import { evaluatorsServer, EVALUATORS_SERVER, COMPARABLE_TOOL } from "./evaluators/comparable.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -32,6 +34,8 @@ export function mcpServers(): Record<string, McpServerConfig> {
     [DECISION_SERVER]: decisionServer(),
     [DELEGATOR_SERVER]: delegatorServer(),
     [OPS_SERVER]: arithmeticServer(),
+    [CONVERTERS_SERVER]: convertersServer(),
+    [EVALUATORS_SERVER]: evaluatorsServer(),
   };
 }
 
@@ -42,7 +46,14 @@ export function mcpServers(): Record<string, McpServerConfig> {
  * keeps the call tree consistently coordinator -> Agent -> comparator tool.
  */
 export function allowedToolNames(): string[] {
-  return ["Task", DECIDE_TOOL, ALGEBRAIC_TOOL, MULTIPLY_TOOL];
+  return [
+    "Task",
+    DECIDE_TOOL,
+    ALGEBRAIC_TOOL,
+    COMPARABLE_TOOL,
+    ...ARITHMETIC_TOOLS,
+    ...CONVERTER_TOOLS,
+  ];
 }
 
 /** Subagent id for a given comparator (e.g. "gt" -> "gt-specialist"). */
@@ -113,6 +124,13 @@ export function coordinatorSystemPrompt(): string {
     "  [RDR] needs reducing       -> equations/unknowns; hand the whole list to the algebra delegator.",
     "  [CMP] {lhs, rhs, comparator}-> send to the matching comparator (a TRUTH) to get true/false.",
     "",
+    "NORMALISE TYPES first. A tool needs its operands in the right form. If an operand is a number",
+    "word (\"twelve\") or a JSON object, CONVERT it before comparing/calculating, then chain the result:",
+    `    \`${CONVERTER_TOOLS[0]}\` — string (word or digits) -> integer;`,
+    `    \`${CONVERTER_TOOLS[1]}\` — pull an id field out of a JSON object -> string.`,
+    `  If unsure whether two values can be compared, call \`${COMPARABLE_TOOL}\` first; it returns ok plus`,
+    "  a suggested converter when they are not directly comparable.",
+    "",
     "For each atomic comparison, pick the delegate by its KIND:",
     "",
     '  • TRUTH — a yes/no question about the ordering of two numbers ("is a > b", "a == b", "a <= b").',
@@ -121,10 +139,13 @@ export function coordinatorSystemPrompt(): string {
     routing,
     "",
     '  • DECISION — which of two values is better / which to pick ("which is bigger", "the smaller of",',
-    '    "which comes first alphabetically").',
-    `    Call the \`${DECIDE_TOOL}\` tool with: lhs, rhs, comparator ("numeric" for numbers or`,
-    '    "alpha" for text), and goal ("max" = larger/later is better, "min" = smaller/earlier is better).',
-    "    It returns -1 (lhs is better), +1 (rhs is better), or 0 (equal).",
+    '    "which comes first alphabetically", "which strategy is best").',
+    `    Call the \`${DECIDE_TOOL}\` tool with: lhs, rhs, comparator, and goal.`,
+    '    comparator = "numeric" (numbers), "alpha" (text), or "outcome" for JSON objects',
+    '    {expectedValue, survivalProbability} (survival ranked first, then value).',
+    '    goal = "max" (larger/later/better wins) or "min" (smaller/earlier wins).',
+    "    It returns -1 (lhs is better), +1 (rhs is better), or 0 (equal). For 3+ candidates, compare",
+    "    pairwise and keep the winner.",
     "",
     "  • DERIVATION [RDR] — the request implies equations / unknowns (word problems, systems).",
     "    Translate the statement into linear equations (interpretation only, not computation),",
@@ -137,10 +158,12 @@ export function coordinatorSystemPrompt(): string {
     "      - ok=true means the system was SOLVED (not merely 'solvable') — report the value(s) from",
     '        `solution` (e.g. Tony\'s age); never answer just "true"/"false" for a derivation.',
     "",
-    "  • ARITHMETIC — combining quantities, e.g. multiplication.",
-    `    Call \`${MULTIPLY_TOOL}\` with two operands (type "numeric" for numbers). For more than two`,
-    "    factors, CHAIN: multiply the first two, then multiply that product by the next, and so on.",
-    "    Never multiply or add in your head — each step is a tool call.",
+    "  • ARITHMETIC — calculate with numbers: multiply / add / subtract / divide.",
+    `    Call the matching tool (mcp__${OPS_SERVER}__multiply / __add / __subtract / __divide) with two`,
+    "    operands. For 3+ operands or a multi-step formula (e.g. an expected value = sum of",
+    "    value*probability terms), CHAIN the calls, feeding each result into the next.",
+    `    To then choose the best of several COMPUTED outcomes, compare them with \`${DECIDE_TOOL}\``,
+    "    (there is no separate outcome comparator). Never calculate in your head.",
     "",
     "Use your language understanding to break the request into sub-problems, and judge how they relate:",
     "  - PARALLEL (independent) — delegate them together in ONE turn (emit the tool calls at once),",
