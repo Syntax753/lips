@@ -3,6 +3,7 @@ import { serverBinary, model } from "./config.js";
 import { OPERATORS } from "./parser.js";
 import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
 import { delegatorServer, DELEGATOR_SERVER, ALGEBRAIC_TOOL } from "./delegator/index.js";
+import { arithmeticServer, OPS_SERVER, MULTIPLY_TOOL } from "./ops/arithmetic.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -12,32 +13,36 @@ export function toolName(canonical: string): string {
   return `mcp__${MCP_SERVER_NAME}__${canonical}`;
 }
 
+/** The Go comparator server, registered per-specialist (not on the coordinator). */
+function comparatorServerSpec() {
+  return { [MCP_SERVER_NAME]: { type: "stdio" as const, command: serverBinary, args: [] } };
+}
+
 /**
- * MCP servers available to the coordinator:
- *  - comparators (Go, stdio) — the boolean specialists' tools;
+ * MCP servers available to the COORDINATOR:
  *  - decision (in-process) — "which is better" (comparator + goal);
- *  - delegator (in-process) — domain solvers; today the algebraic delegator,
- *    which resolves a whole linear system deterministically.
+ *  - delegator (in-process) — domain solvers; today the algebraic delegator.
+ *
+ * The Go comparators server is deliberately NOT here — it is registered only on
+ * the specialist agents (see specialistAgents), so a boolean truth can only be
+ * resolved by delegating to a specialist, never by the coordinator directly.
  */
 export function mcpServers(): Record<string, McpServerConfig> {
   return {
-    [MCP_SERVER_NAME]: { type: "stdio", command: serverBinary, args: [] },
     [DECISION_SERVER]: decisionServer(),
     [DELEGATOR_SERVER]: delegatorServer(),
+    [OPS_SERVER]: arithmeticServer(),
   };
 }
 
 /**
- * Tools the coordinator itself may call. Specialists are restricted separately
- * (each to its single comparator tool) via their agent definition.
+ * Tools the coordinator itself may call. The boolean comparator tools are
+ * deliberately NOT here: a truth must be delegated to a specialist (via Task),
+ * which owns its single comparator tool through its agent definition. This
+ * keeps the call tree consistently coordinator -> Agent -> comparator tool.
  */
 export function allowedToolNames(): string[] {
-  return [
-    "Task",
-    DECIDE_TOOL,
-    ALGEBRAIC_TOOL,
-    ...OPERATORS.map((op) => toolName(op.canonical)),
-  ];
+  return ["Task", DECIDE_TOOL, ALGEBRAIC_TOOL, MULTIPLY_TOOL];
 }
 
 /** Subagent id for a given comparator (e.g. "gt" -> "gt-specialist"). */
@@ -66,6 +71,9 @@ export function specialistAgents(): Record<string, AgentDefinition> {
         `Reply with ONLY the lowercase word it yields: \`true\` or \`false\`. No other text.`,
       ].join(" "),
       tools: [tool],
+      // The comparators server is scoped to the specialist, so only it (not the
+      // coordinator) can reach the Go comparator tools.
+      mcpServers: [comparatorServerSpec()],
       model,
       // A specialist needs at most: one tool call + one summarising turn.
       maxTurns: 3,
@@ -90,11 +98,11 @@ export function coordinatorSystemPrompt(): string {
     "You are a symbolic-logic ORCHESTRATOR. Your job is to DECOMPOSE the user's request into atomic",
     "symbolic truths, DELEGATE the work to tools, and COMPOSE the results into the answer.",
     "",
-    "HARD RULE — you NEVER compare two entities or do algebra yourself. You must not decide whether one",
-    "value is greater/smaller/equal/better, nor isolate or solve for a variable, by your own reasoning.",
-    "Every comparison and every derivation MUST go to a tool. Your own work is limited to: classifying,",
-    "decomposition, delegation, and composition (boolean logic such as AND / OR / NOT, picking an",
-    "extreme, ordering, counting).",
+    "HARD RULE — you NEVER compare, do algebra, or do arithmetic yourself. You must not decide whether",
+    "one value is greater/smaller/equal/better, isolate or solve a variable, or multiply/add numbers, by",
+    "your own reasoning. Every comparison, derivation, and calculation MUST go to a tool. Your own work",
+    "is limited to: classifying, decomposition, delegation, and composition (boolean logic AND / OR /",
+    "NOT, picking an extreme, ordering, counting, and chaining one tool's result into the next).",
     "",
     "NARRATE everything: right before each tool call, output ONE short sentence saying what you are",
     "delegating and why — the user watches these explanations.",
@@ -128,6 +136,11 @@ export function coordinatorSystemPrompt(): string {
     "        specialists (Task) — independent ones in parallel.",
     "      - ok=true means the system was SOLVED (not merely 'solvable') — report the value(s) from",
     '        `solution` (e.g. Tony\'s age); never answer just "true"/"false" for a derivation.',
+    "",
+    "  • ARITHMETIC — combining quantities, e.g. multiplication.",
+    `    Call \`${MULTIPLY_TOOL}\` with two operands (type "numeric" for numbers). For more than two`,
+    "    factors, CHAIN: multiply the first two, then multiply that product by the next, and so on.",
+    "    Never multiply or add in your head — each step is a tool call.",
     "",
     "Use your language understanding to break the request into sub-problems, and judge how they relate:",
     "  - PARALLEL (independent) — delegate them together in ONE turn (emit the tool calls at once),",

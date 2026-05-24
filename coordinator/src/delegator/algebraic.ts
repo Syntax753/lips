@@ -92,6 +92,9 @@ export function reduce(
 
 // --- the deterministic system solve (evaluator -> reducer/solver) ------------
 
+/** One internal operation the delegator performed, with its inputs and output. */
+export type OpTrace = { name: string; input: string; output: string };
+
 export type AlgebraicResult = {
   ok: boolean;
   preflight: PreflightResult;
@@ -99,8 +102,8 @@ export type AlgebraicResult = {
   /** Each original equation rendered with the solution substituted in, as a
    *  CMP to send to the `eq` comparator to confirm the solution holds. */
   comparables: Cmp[];
-  /** Human-readable trace of the reduce/solve operations performed. */
-  steps: string[];
+  /** Structured trace of each internal op (preflight, reduce, solve). */
+  trace: OpTrace[];
   reason: string;
 };
 
@@ -113,14 +116,20 @@ function evalToNumber(side: string, values: Record<string, number>): number {
 
 export function solveSystem(equations: string[]): AlgebraicResult {
   const pf = preflight(equations);
-  const steps: string[] = [];
+  const trace: OpTrace[] = [
+    {
+      name: "preflight",
+      input: `equations: ${JSON.stringify(equations)}`,
+      output: pf.reason,
+    },
+  ];
   const solution: Record<string, number> = {};
   const fail = (reason: string): AlgebraicResult => ({
     ok: false,
     preflight: pf,
     solution,
     comparables: [],
-    steps,
+    trace,
     reason,
   });
 
@@ -134,7 +143,11 @@ export function solveSystem(equations: string[]): AlgebraicResult {
     const idx = working.findIndex((e) => L.variablesOf(e).length > 0);
     const v = L.variablesOf(working[idx])[0];
     const expr = L.isolate(working[idx], v);
-    steps.push(`reduce: ${v} = ${L.formatExpr(expr)}`);
+    trace.push({
+      name: "reduce",
+      input: `isolate ${v} in ${L.formatExpr(working[idx])} = 0`,
+      output: `${v} = ${L.formatExpr(expr)}`,
+    });
     chain.push({ variable: v, expr });
     working = working.filter((_, i) => i !== idx).map((other) => L.substituteExpr(other, v, expr));
   }
@@ -147,11 +160,19 @@ export function solveSystem(equations: string[]): AlgebraicResult {
   // Back-substitution: resolve each isolated variable using already-known values.
   for (let i = chain.length - 1; i >= 0; i--) {
     const { variable, expr } = chain[i];
+    const knowns = { ...solution };
     let e = expr;
-    for (const [kv, val] of Object.entries(solution)) e = L.substituteValue(e, kv, val);
+    for (const [kv, val] of Object.entries(knowns)) e = L.substituteValue(e, kv, val);
     if (!L.isConstant(e)) return fail(`dependent system: cannot resolve ${variable}`);
     solution[variable] = e.constant;
-    steps.push(`solve: ${variable} = ${e.constant}`);
+    const known = Object.entries(knowns)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+    trace.push({
+      name: "solve",
+      input: `${variable} = ${L.formatExpr(expr)}${known ? ` with ${known}` : ""}`,
+      output: `${variable} = ${e.constant}`,
+    });
   }
 
   const missing = pf.unknowns.filter((u) => !(u in solution));
@@ -168,7 +189,7 @@ export function solveSystem(equations: string[]): AlgebraicResult {
     };
   });
 
-  return { ok: true, preflight: pf, solution, comparables, steps, reason: "solved" };
+  return { ok: true, preflight: pf, solution, comparables, trace, reason: "solved" };
 }
 
 // --- the delegator tool ------------------------------------------------------
@@ -184,13 +205,9 @@ export const algebraicTool = tool(
   async (args) => {
     const result = solveSystem(args.equations);
     const text = result.ok
-      ? [
-          `preflight: ok — ${result.preflight.reason}`,
-          ...result.steps,
-          `solution: ${Object.entries(result.solution)
-            .map(([k, v]) => `${k} = ${v}`)
-            .join(", ")}`,
-        ].join("\n")
+      ? `solution: ${Object.entries(result.solution)
+          .map(([k, v]) => `${k} = ${v}`)
+          .join(", ")}`
       : `not solvable: ${result.reason}`;
     return { content: [{ type: "text", text }], structuredContent: result };
   },

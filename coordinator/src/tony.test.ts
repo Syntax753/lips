@@ -42,8 +42,9 @@ test("(b) the delegator solves for each unknown: T = -5, M = -20", () => {
   assert.equal(r.preflight.ok, true); // (a) ran inside the delegator
   assert.equal(r.solution.T, -5);
   assert.equal(r.solution.M, -20);
-  // one solve step per unknown
-  assert.equal(r.steps.filter((s) => s.startsWith("solve:")).length, 2);
+  // one solve op per unknown, and a preflight op up front
+  assert.equal(r.trace.filter((op) => op.name === "solve").length, 2);
+  assert.equal(r.trace[0]?.name, "preflight");
 });
 
 test("(c) comparators confirm each equation holds at the solution", async () => {

@@ -12,17 +12,20 @@ const PROMPT = ">>> ";
 function banner(): void {
   console.log("lips — symbolic-logic coordinator REPL");
   console.log(`coordinator model: ${model}   server: ${serverBinary}`);
-  console.log('Type an expression like "12 GT 14".  :help for commands, :quit to exit.');
+  console.log("Ask in plain language — a comparison, a decision, or a word problem,");
+  console.log('e.g. "is twelve greater than fourteen?" or "which is bigger, 12 or 14?".');
+  console.log(":help for commands, :quit to exit.");
 }
 
 function help(): void {
   console.log(
     [
       "Commands:",
-      "  <text>                          Ask the coordinator (uses the model). It either answers a",
-      "                                  boolean comparison or makes a decision, e.g.:",
-      '                                    "is 12 greater than 14?"   -> false',
-      '                                    "which is bigger, 12 or 14?" -> 14',
+      "  <text>                          Ask the coordinator (uses the model): a comparison, a decision,",
+      "                                  or a word problem / system of equations. e.g.:",
+      '                                    "is 12 greater than 14?"          -> false',
+      '                                    "which is bigger, 12 or 14?"      -> 14',
+      '                                    "I am four times my nephew\'s age..." -> solves the system',
       "  :direct <expr>                  Boolean compare via the Go server directly (no model).",
       "  :decide <kind> <goal> <a> <b>   Decide locally (no model). kind=numeric|alpha, goal=max|min.",
       "                                  Prints -1 (a better) / +1 (b better) / 0 (tie).",
@@ -60,18 +63,11 @@ async function runDirect(expr: string): Promise<void> {
 async function runCoordinator(expr: string): Promise<void> {
   const result = await coordinate(expr);
 
-  // Every function call is shown — the coordinator's narration, each call, and
-  // each tool's result — so the whole delegation is visible.
+  // The whole run as a call tree: the coordinator (and every tool) shows its
+  // name and inputs, nested calls indented beneath, and its return on a `--> `
+  // line. The coordinator's own `-->` is the final answer.
   for (const step of result.trace) console.log(`  ${step}`);
-
-  if (result.error) {
-    console.log(`  error: ${result.error}`);
-    return;
-  }
-  // Print the coordinator's actual final answer (a truth is just "true"/"false";
-  // a decision or derivation is its own text — do not reduce it to a boolean).
-  const answer = result.raw.trim();
-  console.log(answer ? answer.split("\n").map((l) => `  ${l}`).join("\n") : "  (no answer)");
+  if (result.error) console.log(`  error: ${result.error}`);
 }
 
 function runDecide(rest: string): void {
