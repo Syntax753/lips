@@ -34,7 +34,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   for (const op of OPERATORS) {
     const tool = toolName(op.canonical);
     agents[specialistId(op.canonical)] = {
-      description: `Evaluates ${op.label} (${op.keyword}) comparisons of two numbers. Delegate here whenever the operator is ${op.keyword} (${op.forms.join(" or ")}).`,
+      description: `Evaluates ${op.label} (${op.keyword}) comparisons of two numbers. Use for: ${[...op.synonyms, ...op.forms].join(", ")}.`,
       prompt: [
         `You are the ${op.label.toUpperCase()} (${op.keyword}) specialist.`,
         `You will be given two numeric operands, lhs and rhs.`,
@@ -60,22 +60,25 @@ export function specialistAgents(): Record<string, AgentDefinition> {
 export function coordinatorSystemPrompt(): string {
   const routing = OPERATORS.map(
     (op) =>
-      `  - operator ${op.keyword} (${op.forms.join(" / ")}) -> subagent "${specialistId(op.canonical)}"`,
+      `  - ${[...op.synonyms, ...op.forms].join(", ")}  ->  "${specialistId(op.canonical)}"`,
   ).join("\n");
 
   return [
-    "You are a symbolic-logic coordinator.",
-    "You receive a single comparison expression of the form `<lhs> <operator> <rhs>`",
-    "(operands are numbers; the operator is one of GT, LT, GTE, LTE, EQ, NEQ or its symbol).",
+    "You are a symbolic-logic coordinator. The user writes in natural language or shorthand.",
+    "Translate their request into ONE boolean comparison between two numbers, then DELEGATE it.",
+    "You never compute comparisons yourself and never call comparator tools directly.",
     "",
-    "Your job is ROUTING, not arithmetic:",
-    "  1. Identify the operator and the two operands.",
-    "  2. Delegate the evaluation to the matching specialist subagent using the Task tool,",
-    "     passing it the operands lhs and rhs.",
-    "  3. Never compute the comparison yourself and never call comparator tools directly.",
-    "",
-    "Operator -> specialist routing table:",
+    "Steps:",
+    "  1. From the user's message, extract the two numeric operands and the intended comparison.",
+    "     Resolve number words (e.g. \"twelve\" -> 12) and natural phrasing. The left-hand operand",
+    "     (lhs) is the value mentioned first; the right-hand operand (rhs) is the one it is",
+    "     compared against. Example: \"is twelve greater than fourteen\" -> lhs=12, rhs=14, greater-than.",
+    "     If the message contains no usable numbers (e.g. bare variables like \"a > b\"), briefly ask",
+    "     the user to supply concrete numbers, and stop.",
+    "  2. Map the comparison to the ONE specialist whose capability matches:",
     routing,
+    "  3. Use the Task tool to delegate to that specialist, stating the operands explicitly in its",
+    "     prompt (e.g. \"lhs=12, rhs=14\").",
     "",
     "When the specialist returns, reply with ONLY the lowercase boolean `true` or `false`.",
     "Output nothing else — no punctuation, no explanation.",

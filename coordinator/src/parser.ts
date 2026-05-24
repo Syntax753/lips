@@ -14,15 +14,53 @@ export interface Operator {
   keyword: string;
   /** Accepted surface forms, lowercased, used by the parser. */
   forms: string[];
+  /** Natural-language phrasings the coordinator maps to this capability. */
+  synonyms: string[];
 }
 
 export const OPERATORS: Operator[] = [
-  { canonical: "gt", label: "greater-than", keyword: "GT", forms: [">", "gt"] },
-  { canonical: "lt", label: "less-than", keyword: "LT", forms: ["<", "lt"] },
-  { canonical: "gte", label: "greater-than-or-equal", keyword: "GTE", forms: [">=", "gte"] },
-  { canonical: "lte", label: "less-than-or-equal", keyword: "LTE", forms: ["<=", "lte"] },
-  { canonical: "eq", label: "equal", keyword: "EQ", forms: ["==", "=", "eq"] },
-  { canonical: "neq", label: "not-equal", keyword: "NEQ", forms: ["!=", "<>", "neq"] },
+  {
+    canonical: "gt",
+    label: "greater-than",
+    keyword: "GT",
+    forms: [">", "gt"],
+    synonyms: ["greater than", "more than", "larger than", "bigger than", "exceeds", "over", "above"],
+  },
+  {
+    canonical: "lt",
+    label: "less-than",
+    keyword: "LT",
+    forms: ["<", "lt"],
+    synonyms: ["less than", "fewer than", "smaller than", "lower than", "under", "below"],
+  },
+  {
+    canonical: "gte",
+    label: "greater-than-or-equal",
+    keyword: "GTE",
+    forms: [">=", "gte"],
+    synonyms: ["at least", "greater than or equal to", "no less than", "not less than", "minimum"],
+  },
+  {
+    canonical: "lte",
+    label: "less-than-or-equal",
+    keyword: "LTE",
+    forms: ["<=", "lte"],
+    synonyms: ["at most", "less than or equal to", "no more than", "not more than", "maximum"],
+  },
+  {
+    canonical: "eq",
+    label: "equal",
+    keyword: "EQ",
+    forms: ["==", "=", "eq"],
+    synonyms: ["equal to", "equals", "the same as", "identical to"],
+  },
+  {
+    canonical: "neq",
+    label: "not-equal",
+    keyword: "NEQ",
+    forms: ["!=", "<>", "neq"],
+    synonyms: ["not equal to", "different from", "differs from", "isn't equal to", "unequal to"],
+  },
 ];
 
 const FORM_TO_CANONICAL = new Map<string, string>();
