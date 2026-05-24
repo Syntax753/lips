@@ -42,16 +42,24 @@ It never compares two values itself. There are two delegation targets:
   dependencies.
 - **`coordinator/`** — the **TypeScript** coordinator and REPL, built on the
   [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk).
-  - `src/cmp/` — programmatic comparators (`numeric`, `alpha`) returning the
-    standard natural order `-1 | 0 | 1`.
-  - `src/validator.ts` — wraps a comparator with a `max`/`min` goal to decide
-    which value is "better".
-  - `src/validatorTool.ts` — exposes `validate` as an in-process SDK MCP tool,
-    available to the coordinator only (not to the specialists).
+  Two extensible tool families plus an algebra pipeline, all in-process MCP tools:
+  - `src/cmp/` — **comparators**, specialised by input type (`numeric`, `alpha`),
+    returning the natural order `-1 | 0 | 1`. `cmp/decide.ts` layers a `max`/`min`
+    goal on top to answer "which is better"; exposed as the `decision/decide` tool.
+  - `src/validators/` — **validators**, predicate tools returning `true`/`false`.
+    `preflight.ts` checks whether a linear system is solvable.
+  - `src/reducers/algebra.ts` (`reduce`) and `src/solvers/algebra.ts` (`solve`) —
+    the linear-algebra pipeline, backed by `src/algebra/linear.ts` (a hand-rolled
+    parser → coefficient form; no CAS dependency).
 
 Why two languages: the Claude Agent SDK (the piece that spawns subagents via the
 Task tool) ships for TypeScript and Python only — there is no Go agent SDK. So Go
 owns the strongly-typed comparison tools and TypeScript owns the orchestration.
+
+The coordinator is **decompose → delegate → compose** and never compares or
+computes itself: a boolean **truth** goes to a comparator specialist, a
+**decision** to `decide`, and an **algebraic derivation** runs `preflight` →
+`reduce` → `solve` until every unknown has a value.
 
 ## Prerequisites
 
@@ -85,8 +93,8 @@ on startup. Run it explicitly when you just want to compile and test the Go side
   · [gt-specialist] -> mcp__comparators__gt({"lhs":12,"rhs":14})
   false
 
->>> which is bigger, 12 or 14?            # decision -> validator
-  · [coordinator] -> mcp__validator__validate({"lhs":"12","rhs":"14","comparator":"numeric","goal":"max"})
+>>> which is bigger, 12 or 14?            # decision -> decide
+  · [coordinator] -> mcp__decision__decide({"lhs":"12","rhs":"14","comparator":"numeric","goal":"max"})
   14
 
 >>> is 5 > 3 and 2 < 1?                    # compound -> decomposed, then composed
@@ -94,15 +102,21 @@ on startup. Run it explicitly when you just want to compile and test the Go side
   · [coordinator] -> Task({"subagent_type":"lt-specialist", ...})
   false
 
+>>> I am four times Tony's age; 10 years ago I was double his age. How old is Tony?
+  · [coordinator] -> mcp__validators__preflight({"equations":["M = 4*T","M - 10 = 2*(T - 10)"]})
+  · [coordinator] -> mcp__reducers__reduce({"equation":"M - 10 = 2*(T - 10)","isolate":"T","substitutions":{"M":"4*T"}})
+  T = -5 (and M = -20) — flagged: a negative age is impossible.
+
 >>> :direct 14 >= 14                       # boolean compare via Go server (no model)
   true
->>> :validate numeric max 12 14            # decision via validator (no model)
+>>> :decide numeric max 12 14              # decision locally (no model)
   verdict +1  (better: 14)
 >>> :ops                                   # list operators
->>> :trace off                             # hide the delegation trace
 >>> :help
 >>> :quit
 ```
+
+Tool calls (the `·` lines) are always shown.
 
 Input accepts natural language, or keyword/symbol forms: `GT`/`>`, `LT`/`<`,
 `GTE`/`>=`, `LTE`/`<=`, `EQ`/`==`, `NEQ`/`!=`.
@@ -127,9 +141,13 @@ The pieces are arranged so the next phases drop in without reshaping the core:
 
 1. **Decomposition & composition** *(landed)* — the coordinator splits compound
    logic into atomic comparisons, delegates each, and composes the results.
-2. **Richer comparators** — extend `cmp/` beyond `numeric`/`alpha` (e.g. dates,
-   versions, or object comparison by a chosen field) so decisions can range over
-   more than scalars.
-3. **Prompts** — add MCP prompts to the Go server for guided symbolic input.
-4. **Mathematical proofs** — have the coordinator orchestrate multi-step
-   reasoning over the decomposed results.
+2. **Linear algebra** *(landed)* — `preflight` / `reduce` / `solve` resolve linear
+   systems; the coordinator translates word problems into equations and orchestrates.
+3. **Richer comparators & validators** — more `cmp/` types (dates, versions, object
+   comparison by field) and more `validators/` (data-structure checks), all behind
+   the same interfaces.
+4. **Beyond linear** — quadratic/nonlinear solvers; preflight would need a stronger
+   solvability check than count + connectivity.
+5. **Prompts** — add MCP prompts to the Go server for guided symbolic input.
+6. **Mathematical proofs** — have the coordinator orchestrate multi-step reasoning
+   over the decomposed results.

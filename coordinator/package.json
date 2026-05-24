@@ -12,6 +12,7 @@
     "setup": "tsx src/bootstrap.ts",
     "dev": "tsx src/repl.ts",
     "repl": "node dist/repl.js",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

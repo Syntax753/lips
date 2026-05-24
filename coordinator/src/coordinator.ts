@@ -1,14 +1,12 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import {
+  allowedToolNames,
   coordinatorSystemPrompt,
   mcpServers,
   specialistAgents,
-  toolName,
 } from "./agents.js";
-import { OPERATORS } from "./parser.js";
 import { model } from "./config.js";
-import { VALIDATE_TOOL } from "./validatorTool.js";
 
 export interface CoordinatorResult {
   /** The raw final text from the coordinator. */
@@ -58,10 +56,10 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     mcpServers: mcpServers(),
     agents: specialistAgents(),
     // The coordinator delegates boolean comparisons (Task -> specialists own the
-    // comparator tools) and makes decisions itself via the in-process validator.
-    allowedTools: ["Task", VALIDATE_TOOL, ...OPERATORS.map((op) => toolName(op.canonical))],
+    // comparator tools) and calls the decision / preflight / reduce / solve tools itself.
+    allowedTools: allowedToolNames(),
     permissionMode: "bypassPermissions",
-    maxTurns: 10,
+    maxTurns: 20,
   };
 
   try {

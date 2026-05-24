@@ -4,11 +4,10 @@ import { directEvaluate } from "./mcpClient.js";
 import { OPERATORS, parseExpression } from "./parser.js";
 import { serverBinary, model } from "./config.js";
 import { ensureServerReady } from "./bootstrap.js";
-import { validate, type Goal } from "./validator.js";
+import { decide, type Goal } from "./cmp/decide.js";
 import { COMPARATOR_NAMES, type ComparatorName } from "./cmp/index.js";
 
 const PROMPT = ">>> ";
-let showTrace = true;
 
 function banner(): void {
   console.log("lips — symbolic-logic coordinator REPL");
@@ -25,14 +24,14 @@ function help(): void {
       '                                    "is 12 greater than 14?"   -> false',
       '                                    "which is bigger, 12 or 14?" -> 14',
       "  :direct <expr>                  Boolean compare via the Go server directly (no model).",
-      "  :validate <kind> <goal> <a> <b> Decide locally via the validator (no model). kind=numeric|alpha,",
-      "                                  goal=max|min. Prints -1 (a better) / +1 (b better) / 0 (tie).",
+      "  :decide <kind> <goal> <a> <b>   Decide locally (no model). kind=numeric|alpha, goal=max|min.",
+      "                                  Prints -1 (a better) / +1 (b better) / 0 (tie).",
       "  :parse  <expr>                  Show how an expression is parsed locally.",
       "  :ops                            List the supported operators.",
-      "  :trace [on|off]                 Toggle delegation trace for coordinator runs.",
       "  :help                           Show this help.",
       "  :quit | :exit                   Leave the REPL (Ctrl-D also works).",
       "",
+      "Tool calls are always shown (· lines) so you can see the delegation as it happens.",
       "Operators accept keyword or symbol forms, e.g. GT or >, NEQ or != .",
     ].join("\n"),
   );
@@ -61,9 +60,8 @@ async function runDirect(expr: string): Promise<void> {
 async function runCoordinator(expr: string): Promise<void> {
   const result = await coordinate(expr);
 
-  if (showTrace && result.trace.length > 0) {
-    for (const step of result.trace) console.log(`  · ${step}`);
-  }
+  // Tool calls are always displayed so the delegation is visible.
+  for (const step of result.trace) console.log(`  · ${step}`);
 
   if (result.error) {
     console.log(`  error: ${result.error}`);
@@ -80,10 +78,10 @@ async function runCoordinator(expr: string): Promise<void> {
   }
 }
 
-function runValidate(rest: string): void {
+function runDecide(rest: string): void {
   const parts = rest.split(/\s+/).filter(Boolean);
   if (parts.length !== 4) {
-    console.log("  usage: :validate <numeric|alpha> <max|min> <lhs> <rhs>");
+    console.log("  usage: :decide <numeric|alpha> <max|min> <lhs> <rhs>");
     return;
   }
   const [comparator, goal, lhs, rhs] = parts;
@@ -96,7 +94,7 @@ function runValidate(rest: string): void {
     return;
   }
   try {
-    const v = validate(lhs, rhs, comparator as ComparatorName, goal as Goal);
+    const v = decide(lhs, rhs, comparator as ComparatorName, goal as Goal);
     const sign = v.verdict > 0 ? "+1" : v.verdict < 0 ? "-1" : "0";
     const better = v.winner === "tie" ? "tie" : v.winner === "lhs" ? lhs : rhs;
     console.log(`  verdict ${sign}  (better: ${better})`);
@@ -116,15 +114,6 @@ async function dispatch(line: string): Promise<void> {
   if (input === ":help" || input === ":h") return help();
   if (input === ":ops") return listOps();
 
-  if (input.startsWith(":trace")) {
-    const arg = input.slice(":trace".length).trim();
-    if (arg === "on") showTrace = true;
-    else if (arg === "off") showTrace = false;
-    else showTrace = !showTrace;
-    console.log(`  trace ${showTrace ? "on" : "off"}`);
-    return;
-  }
-
   if (input.startsWith(":parse")) {
     const expr = input.slice(":parse".length).trim();
     const parsed = parseExpression(expr);
@@ -136,8 +125,8 @@ async function dispatch(line: string): Promise<void> {
     return runDirect(input.slice(":direct".length).trim());
   }
 
-  if (input.startsWith(":validate")) {
-    return runValidate(input.slice(":validate".length).trim());
+  if (input.startsWith(":decide")) {
+    return runDecide(input.slice(":decide".length).trim());
   }
 
   if (input.startsWith(":")) {

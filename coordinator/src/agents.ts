@@ -1,7 +1,10 @@
 import type { AgentDefinition, McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import { serverBinary, model } from "./config.js";
 import { OPERATORS } from "./parser.js";
-import { validatorServer, VALIDATOR_SERVER_NAME, VALIDATE_TOOL } from "./validatorTool.js";
+import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
+import { validatorsServer, VALIDATORS_SERVER, PREFLIGHT_TOOL } from "./validators/preflight.js";
+import { reducersServer, REDUCERS_SERVER, REDUCE_TOOL } from "./reducers/algebra.js";
+import { solversServer, SOLVERS_SERVER, SOLVE_TOOL } from "./solvers/algebra.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -12,14 +15,35 @@ export function toolName(canonical: string): string {
 }
 
 /**
- * MCP servers available to the coordinator: the Go comparator server (stdio)
- * for the boolean specialists, and the in-process validator for decisions.
+ * MCP servers available to the coordinator:
+ *  - comparators (Go, stdio) — the boolean specialists' tools;
+ *  - decision (in-process) — "which is better" (comparator + goal);
+ *  - validators (in-process) — preflight solvability;
+ *  - reducers / solvers (in-process) — the algebra pipeline.
  */
 export function mcpServers(): Record<string, McpServerConfig> {
   return {
     [MCP_SERVER_NAME]: { type: "stdio", command: serverBinary, args: [] },
-    [VALIDATOR_SERVER_NAME]: validatorServer(),
+    [DECISION_SERVER]: decisionServer(),
+    [VALIDATORS_SERVER]: validatorsServer(),
+    [REDUCERS_SERVER]: reducersServer(),
+    [SOLVERS_SERVER]: solversServer(),
   };
+}
+
+/**
+ * Tools the coordinator itself may call. Specialists are restricted separately
+ * (each to its single comparator tool) via their agent definition.
+ */
+export function allowedToolNames(): string[] {
+  return [
+    "Task",
+    DECIDE_TOOL,
+    PREFLIGHT_TOOL,
+    REDUCE_TOOL,
+    SOLVE_TOOL,
+    ...OPERATORS.map((op) => toolName(op.canonical)),
+  ];
 }
 
 /** Subagent id for a given comparator (e.g. "gt" -> "gt-specialist"). */
@@ -87,9 +111,18 @@ export function coordinatorSystemPrompt(): string {
     "",
     '  • DECISION — which of two values is better / which to pick ("which is bigger", "the smaller of",',
     '    "which comes first alphabetically").',
-    `    Call the \`${VALIDATE_TOOL}\` tool with: lhs, rhs, comparator ("numeric" for numbers or`,
+    `    Call the \`${DECIDE_TOOL}\` tool with: lhs, rhs, comparator ("numeric" for numbers or`,
     '    "alpha" for text), and goal ("max" = larger/later is better, "min" = smaller/earlier is better).',
     "    It returns -1 (lhs is better), +1 (rhs is better), or 0 (equal).",
+    "",
+    "  • DERIVATION — the request implies equations / unknowns to solve (word problems, systems).",
+    "    Translate the statement into linear equations yourself (interpretation, not computation),",
+    '    e.g. "I am four times his age" -> "M = 4*T". Then solve ENTIRELY through tools:',
+    `      1. \`${PREFLIGHT_TOOL}\` with the list of equations — if ok=false, explain why and stop.`,
+    `      2. \`${REDUCE_TOOL}\` to isolate a variable or substitute a known relation;`,
+    `      3. \`${SOLVE_TOOL}\` once an equation has a single unknown; feed solved values back as`,
+    "         `knowns`/`substitutions` until every unknown has a number.",
+    "    Never do the algebra in your head — every isolation/solution comes from a tool.",
     "",
     "DECOMPOSE compound requests into several delegations, then COMPOSE:",
     '  - "is 5 > 3 and 2 < 1?"            -> truth(5>3) AND truth(2<1), combine with AND.',
@@ -100,6 +133,7 @@ export function coordinatorSystemPrompt(): string {
     'numbers that were not given (bare variables like "a > b"), briefly ask for them and stop.',
     "",
     "OUTPUT: a single truth -> reply ONLY `true`/`false`; a single decision -> reply with the better",
-    "value (or `tie`); a compound request -> reply with the final composed answer, concisely.",
+    "value (or `tie`); a derivation/compound request -> reply with the final answer concisely, and",
+    "flag any value that breaks a real-world constraint (e.g. a negative age).",
   ].join("\n");
 }
