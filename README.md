@@ -42,24 +42,28 @@ It never compares two values itself. There are two delegation targets:
   dependencies.
 - **`coordinator/`** — the **TypeScript** coordinator and REPL, built on the
   [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk).
-  Two extensible tool families plus an algebra pipeline, all in-process MCP tools:
   - `src/cmp/` — **comparators**, specialised by input type (`numeric`, `alpha`),
     returning the natural order `-1 | 0 | 1`. `cmp/decide.ts` layers a `max`/`min`
     goal on top to answer "which is better"; exposed as the `decision/decide` tool.
-  - `src/validators/` — **validators**, predicate tools returning `true`/`false`.
-    `preflight.ts` checks whether a linear system is solvable.
-  - `src/reducers/algebra.ts` (`reduce`) and `src/solvers/algebra.ts` (`solve`) —
-    the linear-algebra pipeline, backed by `src/algebra/linear.ts` (a hand-rolled
-    parser → coefficient form; no CAS dependency).
+  - `src/delegator/` — **domain delegators** that own the reduce/evaluate/compare
+    logic so the coordinator doesn't orchestrate it step-by-step.
+    `delegator/algebraic.ts` resolves a whole linear system *deterministically*
+    (evaluator `preflight` → reducer + solver), backed by `src/algebra/linear.ts`
+    (a hand-rolled parser → coefficient form; no CAS dependency). Exposed as the
+    single `delegator/algebraic` tool.
+  - `src/delegator/types.ts` — the parameter classification `USR | RDR | CMP`
+    that tags every glyph and tool response so the coordinator can route it.
 
 Why two languages: the Claude Agent SDK (the piece that spawns subagents via the
 Task tool) ships for TypeScript and Python only — there is no Go agent SDK. So Go
 owns the strongly-typed comparison tools and TypeScript owns the orchestration.
 
-The coordinator is **decompose → delegate → compose** and never compares or
-computes itself: a boolean **truth** goes to a comparator specialist, a
-**decision** to `decide`, and an **algebraic derivation** runs `preflight` →
-`reduce` → `solve` until every unknown has a value.
+The coordinator is **classify → decompose → delegate → compose** and never
+compares or does algebra itself. It tags each part `USR`/`RDR`/`CMP` and routes
+by type (independent parts in parallel): a boolean **truth** [CMP] goes to a
+comparator specialist, a **decision** to `decide`, and a **derivation** [RDR] —
+a list of equations — goes to the algebraic delegator, which returns the
+`solution` plus `comparables` (CMP truths that re-confirm it).
 
 ## Prerequisites
 
@@ -103,8 +107,7 @@ on startup. Run it explicitly when you just want to compile and test the Go side
   false
 
 >>> I am four times Tony's age; 10 years ago I was double his age. How old is Tony?
-  · [coordinator] -> mcp__validators__preflight({"equations":["M = 4*T","M - 10 = 2*(T - 10)"]})
-  · [coordinator] -> mcp__reducers__reduce({"equation":"M - 10 = 2*(T - 10)","isolate":"T","substitutions":{"M":"4*T"}})
+  · [coordinator] -> mcp__delegator__algebraic({"equations":["M = 4*T","M - 10 = 2*(T - 10)"]})
   T = -5 (and M = -20) — flagged: a negative age is impossible.
 
 >>> :direct 14 >= 14                       # boolean compare via Go server (no model)
@@ -141,13 +144,14 @@ The pieces are arranged so the next phases drop in without reshaping the core:
 
 1. **Decomposition & composition** *(landed)* — the coordinator splits compound
    logic into atomic comparisons, delegates each, and composes the results.
-2. **Linear algebra** *(landed)* — `preflight` / `reduce` / `solve` resolve linear
-   systems; the coordinator translates word problems into equations and orchestrates.
-3. **Richer comparators & validators** — more `cmp/` types (dates, versions, object
-   comparison by field) and more `validators/` (data-structure checks), all behind
-   the same interfaces.
-4. **Beyond linear** — quadratic/nonlinear solvers; preflight would need a stronger
-   solvability check than count + connectivity.
+2. **Linear algebra** *(landed)* — the algebraic delegator resolves linear systems
+   deterministically (evaluate → reduce → solve); the coordinator just translates
+   word problems into equations and hands off the `RDR` list.
+3. **More delegators & comparators** — non-algebraic `delegator/` domains and more
+   `cmp/` types (dates, versions, object comparison by field), all behind the same
+   classify → delegate interface.
+4. **Beyond linear** — quadratic/nonlinear solvers; the evaluator would need a
+   stronger solvability check than count + connectivity.
 5. **Prompts** — add MCP prompts to the Go server for guided symbolic input.
 6. **Mathematical proofs** — have the coordinator orchestrate multi-step reasoning
    over the decomposed results.

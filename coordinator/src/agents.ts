@@ -2,9 +2,7 @@ import type { AgentDefinition, McpServerConfig } from "@anthropic-ai/claude-agen
 import { serverBinary, model } from "./config.js";
 import { OPERATORS } from "./parser.js";
 import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
-import { validatorsServer, VALIDATORS_SERVER, PREFLIGHT_TOOL } from "./validators/preflight.js";
-import { reducersServer, REDUCERS_SERVER, REDUCE_TOOL } from "./reducers/algebra.js";
-import { solversServer, SOLVERS_SERVER, SOLVE_TOOL } from "./solvers/algebra.js";
+import { delegatorServer, DELEGATOR_SERVER, ALGEBRAIC_TOOL } from "./delegator/index.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -18,16 +16,14 @@ export function toolName(canonical: string): string {
  * MCP servers available to the coordinator:
  *  - comparators (Go, stdio) — the boolean specialists' tools;
  *  - decision (in-process) — "which is better" (comparator + goal);
- *  - validators (in-process) — preflight solvability;
- *  - reducers / solvers (in-process) — the algebra pipeline.
+ *  - delegator (in-process) — domain solvers; today the algebraic delegator,
+ *    which resolves a whole linear system deterministically.
  */
 export function mcpServers(): Record<string, McpServerConfig> {
   return {
     [MCP_SERVER_NAME]: { type: "stdio", command: serverBinary, args: [] },
     [DECISION_SERVER]: decisionServer(),
-    [VALIDATORS_SERVER]: validatorsServer(),
-    [REDUCERS_SERVER]: reducersServer(),
-    [SOLVERS_SERVER]: solversServer(),
+    [DELEGATOR_SERVER]: delegatorServer(),
   };
 }
 
@@ -39,9 +35,7 @@ export function allowedToolNames(): string[] {
   return [
     "Task",
     DECIDE_TOOL,
-    PREFLIGHT_TOOL,
-    REDUCE_TOOL,
-    SOLVE_TOOL,
+    ALGEBRAIC_TOOL,
     ...OPERATORS.map((op) => toolName(op.canonical)),
   ];
 }
@@ -94,13 +88,19 @@ export function coordinatorSystemPrompt(): string {
 
   return [
     "You are a symbolic-logic ORCHESTRATOR. Your job is to DECOMPOSE the user's request into atomic",
-    "symbolic truths (individual comparisons), DELEGATE each comparison to a tool, and COMPOSE the",
-    "results into the answer to the larger ask.",
+    "symbolic truths, DELEGATE the work to tools, and COMPOSE the results into the answer.",
     "",
-    "HARD RULE — you NEVER compare two entities yourself. You must not decide whether one value is",
-    "greater, smaller, equal to, or better than another by your own reasoning. Every pairwise",
-    "comparison MUST be delegated to a tool. Your own work is limited to: decomposition, delegation,",
-    "and composition (boolean logic such as AND / OR / NOT, picking an extreme, ordering, counting).",
+    "HARD RULE — you NEVER compare two entities or do algebra yourself. You must not decide whether one",
+    "value is greater/smaller/equal/better, nor isolate or solve for a variable, by your own reasoning.",
+    "Every comparison and every derivation MUST go to a tool. Your own work is limited to: classifying,",
+    "decomposition, delegation, and composition (boolean logic such as AND / OR / NOT, picking an",
+    "extreme, ordering, counting).",
+    "",
+    "CLASSIFY each glyph and each tool response, and route it by its type (independent parts may be",
+    "delegated in parallel):",
+    "  [USR] raw input            -> analyse and decompose it.",
+    "  [RDR] needs reducing       -> equations/unknowns; hand the whole list to the algebra delegator.",
+    "  [CMP] {lhs, rhs, comparator}-> send to the matching comparator (a TRUTH) to get true/false.",
     "",
     "For each atomic comparison, pick the delegate by its KIND:",
     "",
@@ -115,19 +115,24 @@ export function coordinatorSystemPrompt(): string {
     '    "alpha" for text), and goal ("max" = larger/later is better, "min" = smaller/earlier is better).',
     "    It returns -1 (lhs is better), +1 (rhs is better), or 0 (equal).",
     "",
-    "  • DERIVATION — the request implies equations / unknowns to solve (word problems, systems).",
-    "    Translate the statement into linear equations yourself (interpretation, not computation),",
-    '    e.g. "I am four times his age" -> "M = 4*T". Then solve ENTIRELY through tools:',
-    `      1. \`${PREFLIGHT_TOOL}\` with the list of equations — if ok=false, explain why and stop.`,
-    `      2. \`${REDUCE_TOOL}\` to isolate a variable or substitute a known relation;`,
-    `      3. \`${SOLVE_TOOL}\` once an equation has a single unknown; feed solved values back as`,
-    "         `knowns`/`substitutions` until every unknown has a number.",
-    "    Never do the algebra in your head — every isolation/solution comes from a tool.",
+    "  • DERIVATION [RDR] — the request implies equations / unknowns (word problems, systems).",
+    "    Translate the statement into linear equations (interpretation only, not computation),",
+    '    e.g. "I am four times his age" -> "M = 4*T". Then hand the WHOLE list to the algebra delegator:',
+    `      Call \`${ALGEBRAIC_TOOL}\` once with { equations: [...] }. It preflights, reduces and solves`,
+    "      deterministically and returns { ok, solution, comparables, steps }.",
+    "      - If ok=false, report the reason and stop.",
+    "      - `comparables` are [CMP] items; to confirm the solution, send them to the comparator",
+    "        specialists (Task) — independent ones in parallel.",
+    "      - Read the requested quantity from `solution`.",
     "",
-    "DECOMPOSE compound requests into several delegations, then COMPOSE:",
-    '  - "is 5 > 3 and 2 < 1?"            -> truth(5>3) AND truth(2<1), combine with AND.',
-    '  - "which is biggest: 12, 14, 9?"   -> pairwise DECISIONS to find the maximum.',
-    '  - "is the larger of 3 and 8 over 5?" -> DECISION(max of 3,8)=8, then TRUTH(8 > 5).',
+    "Use your language understanding to break the request into sub-problems, and judge how they relate:",
+    "  - PARALLEL (independent) — delegate them together in ONE turn (emit the tool calls at once),",
+    '    then compose. e.g. "is 5 > 3 and 2 < 1?" -> truth(5>3) ‖ truth(2<1) in parallel, then AND.',
+    "  - LINEAR (dependent) — each step needs the previous result, so delegate in sequence, feeding",
+    '    results forward. e.g. "is the larger of 3 and 8 over 5?" -> DECISION(max of 3,8)=8, THEN TRUTH(8 > 5).',
+    '  - Many requests mix both: parallel branches that later join. e.g. "which is biggest: 12, 14, 9?"',
+    "    -> run the pairwise DECISIONS, then pick the maximum.",
+    "Only serialise when a step truly depends on an earlier result; otherwise delegate concurrently.",
     "",
     'Resolve number words ("twelve" -> 12); the lhs is the value mentioned first. If a comparison needs',
     'numbers that were not given (bare variables like "a > b"), briefly ask for them and stop.',
