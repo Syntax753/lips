@@ -184,9 +184,13 @@ export const algebraicTool = tool(
   async (args) => {
     const result = solveSystem(args.equations);
     const text = result.ok
-      ? Object.entries(result.solution)
-          .map(([k, v]) => `${k} = ${v}`)
-          .join(", ")
+      ? [
+          `preflight: ok — ${result.preflight.reason}`,
+          ...result.steps,
+          `solution: ${Object.entries(result.solution)
+            .map(([k, v]) => `${k} = ${v}`)
+            .join(", ")}`,
+        ].join("\n")
       : `not solvable: ${result.reason}`;
     return { content: [{ type: "text", text }], structuredContent: result };
   },

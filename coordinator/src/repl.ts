@@ -60,22 +60,18 @@ async function runDirect(expr: string): Promise<void> {
 async function runCoordinator(expr: string): Promise<void> {
   const result = await coordinate(expr);
 
-  // Tool calls are always displayed so the delegation is visible.
-  for (const step of result.trace) console.log(`  · ${step}`);
+  // Every function call is shown — the coordinator's narration, each call, and
+  // each tool's result — so the whole delegation is visible.
+  for (const step of result.trace) console.log(`  ${step}`);
 
   if (result.error) {
     console.log(`  error: ${result.error}`);
     return;
   }
-  // Boolean comparisons resolve to true/false; decisions (and clarifying
-  // questions) come back as free text — print whichever we got.
-  if (result.value !== null) {
-    console.log(`  ${result.value}`);
-  } else if (result.raw.trim() !== "") {
-    console.log(`  ${result.raw.trim()}`);
-  } else {
-    console.log("  (no answer)");
-  }
+  // Print the coordinator's actual final answer (a truth is just "true"/"false";
+  // a decision or derivation is its own text — do not reduce it to a boolean).
+  const answer = result.raw.trim();
+  console.log(answer ? answer.split("\n").map((l) => `  ${l}`).join("\n") : "  (no answer)");
 }
 
 function runDecide(rest: string): void {
