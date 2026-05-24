@@ -2,10 +2,20 @@ import type { AgentDefinition, McpServerConfig } from "@anthropic-ai/claude-agen
 import { serverBinary, model } from "./config.js";
 import { OPERATORS } from "./parser.js";
 import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
-import { delegatorServer, DELEGATOR_SERVER, ALGEBRAIC_TOOL } from "./delegator/index.js";
+import {
+  delegatorServer,
+  DELEGATOR_SERVER,
+  ALGEBRAIC_TOOL,
+  STATEMACHINE_TOOL,
+} from "./delegator/index.js";
 import { arithmeticServer, OPS_SERVER, ARITHMETIC_TOOLS } from "./ops/arithmetic.js";
 import { convertersServer, CONVERTERS_SERVER, CONVERTER_TOOLS } from "./converters/index.js";
-import { evaluatorsServer, EVALUATORS_SERVER, COMPARABLE_TOOL } from "./evaluators/comparable.js";
+import {
+  evaluatorsServer,
+  EVALUATORS_SERVER,
+  COMPARABLE_TOOL,
+  GRIDVALID_TOOL,
+} from "./evaluators/index.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -21,6 +31,7 @@ export const DECISION_SPECIALIST = "decision-specialist";
 export const ALGEBRA_SPECIALIST = "algebra-specialist";
 export const CONVERTER_SPECIALIST = "converter-specialist";
 export const EVALUATOR_SPECIALIST = "evaluator-specialist";
+export const STATE_SPECIALIST = "state-specialist";
 
 /**
  * Every tool server is registered here, session-wide. The coordinator is still
@@ -42,6 +53,24 @@ export function mcpServers(): Record<string, McpServerConfig> {
 /** Subagent id for a given comparator (e.g. "gt" -> "gt-specialist"). */
 export function specialistId(canonical: string): string {
   return `${canonical}-specialist`;
+}
+
+/**
+ * Every leaf tool — all owned by specialists, none by the coordinator. Passed
+ * as the coordinator's `disallowedTools` so they don't even appear in its tool
+ * list (it sees only Task), which stops it from attempting a direct call.
+ */
+export function specialistToolNames(): string[] {
+  return [
+    ...OPERATORS.map((op) => toolName(op.canonical)),
+    DECIDE_TOOL,
+    ALGEBRAIC_TOOL,
+    STATEMACHINE_TOOL,
+    COMPARABLE_TOOL,
+    GRIDVALID_TOOL,
+    ...ARITHMETIC_TOOLS,
+    ...CONVERTER_TOOLS,
+  ];
 }
 
 /**
@@ -129,6 +158,19 @@ export function specialistAgents(): Record<string, AgentDefinition> {
     maxTurns: 3,
   };
 
+  agents[STATE_SPECIALIST] = {
+    description: "Handles game states given as ASCII grids: lists all next states, validates a grid.",
+    prompt: [
+      "You handle game-state grids.",
+      `To list ALL possible next states, call \`${STATEMACHINE_TOOL}\` with { grid, ruleset } (ruleset`,
+      'defaults to "sokoban"); reply with the full list of resulting grids it returns.',
+      `To check a grid is well-formed, call \`${GRIDVALID_TOOL}\`. Do not simulate moves yourself.`,
+    ].join(" "),
+    tools: [STATEMACHINE_TOOL, GRIDVALID_TOOL],
+    model,
+    maxTurns: 3,
+  };
+
   return agents;
 }
 
@@ -147,11 +189,13 @@ export function coordinatorSystemPrompt(): string {
     "You are a symbolic-logic ORCHESTRATOR. You DECOMPOSE the request, DELEGATE every unit of work to a",
     "specialist via the Task tool, and COMPOSE their results into the answer.",
     "",
-    "HARD RULE — Task is your ONLY tool. You never call a comparison, arithmetic, algebra, conversion or",
-    "evaluation tool yourself, and you never compute/compare/convert in your head (not even 4 + 2). For",
-    "EVERY such step, spawn the matching specialist via Task and use exactly what it returns. Your own",
-    "work is limited to: classifying, decomposing, delegating, and composing (boolean AND / OR / NOT,",
-    "picking an extreme, and chaining one specialist's result into the next Task).",
+    "HARD RULE — Task is your ONLY tool. You do NOT have access to the comparison / arithmetic / algebra /",
+    "conversion / evaluation / state tools; they belong to the specialists. A direct tool call by you is",
+    "DENIED and wastes a turn — never attempt one, go straight to Task. You also never compute, compare,",
+    "or convert in your head (not even 4 + 2). For EVERY such step, spawn the matching specialist via Task",
+    "and use exactly what it returns. Your own work is limited to: classifying, decomposing, delegating,",
+    "and composing (boolean AND / OR / NOT, picking an extreme, chaining one specialist's result into the",
+    "next Task).",
     "",
     "NARRATE: right before each Task, output ONE short sentence saying what you are delegating and why.",
     "",
@@ -175,6 +219,10 @@ export function coordinatorSystemPrompt(): string {
     "",
     `  EVALUATE — unsure whether two values can be compared at all:`,
     `         -> "${EVALUATOR_SPECIALIST}"  (returns ok + a suggested converter when not comparable).`,
+    "",
+    `  STATE / GRID — the input is a game state as an ASCII grid (rows of '.', '@', etc.):`,
+    `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states for the ruleset, default`,
+    "            sokoban). Just relay the full list of resulting grids; do not move pieces yourself.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",

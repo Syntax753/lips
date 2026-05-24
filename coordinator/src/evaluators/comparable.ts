@@ -1,14 +1,11 @@
 import { z } from "zod";
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import { tool } from "@anthropic-ai/claude-agent-sdk";
 
 /**
  * Evaluator that judges whether two values can be compared under a given
  * comparator, and — if not — suggests a converter to make them comparable.
  * Like every evaluator, the headline result is a boolean (`ok`).
  */
-
-export const EVALUATORS_SERVER = "evaluators";
-export const COMPARABLE_TOOL = `mcp__${EVALUATORS_SERVER}__comparable`;
 
 export type ComparableResult = {
   ok: boolean;
@@ -75,6 +72,3 @@ export const comparableTool = tool(
   },
 );
 
-export function evaluatorsServer() {
-  return createSdkMcpServer({ name: EVALUATORS_SERVER, version: "0.1.0", tools: [comparableTool] });
-}
