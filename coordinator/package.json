@@ -1,0 +1,25 @@
+{
+  "name": "lips-coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Claude Agent SDK coordinator + REPL that delegates boolean comparisons to short-lived per-comparator subagents backed by the Go MCP server.",
+  "bin": {
+    "lips": "./dist/repl.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "setup": "tsx src/bootstrap.ts",
+    "dev": "tsx src/repl.ts",
+    "repl": "node dist/repl.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.150"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

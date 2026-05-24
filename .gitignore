@@ -1,0 +1,16 @@
+# Node
+node_modules/
+coordinator/dist/
+npm-debug.log*
+
+# Go
+go-mcp-server/bin/
+*.exe
+*.test
+
+# Bundled Go toolchain + caches (downloaded on first run)
+.toolchain/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
