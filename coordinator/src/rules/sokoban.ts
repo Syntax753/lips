@@ -7,9 +7,10 @@ import { parseRule, type RuleSet } from "./types.js";
  * empty box goal `~`) — the box slides there and the player takes the box's old
  * square. Box goals `~` are targets: when a grid has any, the objective becomes
  * covering them ALL with boxes (a box pushed onto `~` becomes `*`); a box on a
- * goal is fixed. The player on the goal `x` is shown as `X` (and may step off).
- * The win is met when every box goal is covered AND the player is on `x`. The
- * player leaves floor `.` behind.
+ * goal can be pushed off again (full Sokoban). The player on the goal `x` is
+ * shown as `X`, and on an uncovered box goal `~` as `&` (both may step off). The
+ * win is met when every box goal is covered AND the player is on `x`. The player
+ * leaves floor `.` behind.
  */
 export const sokoban: RuleSet = {
   name: "sokoban",
@@ -21,4 +22,5 @@ export const sokoban: RuleSet = {
   boxGoal: "~",
   boxOnGoal: "*",
   playerOnGoal: "X",
+  playerOnBoxGoal: "&",
 };

@@ -38,6 +38,12 @@ export type RuleSet = {
    * currently on the goal — is robust. Optional.
    */
   playerOnGoal?: string;
+  /**
+   * Glyph for the player standing on an (uncovered) box goal `boxGoal`. Lets the
+   * player cross box goals and end on one after pushing a covered box off it
+   * (reverting to `boxGoal`). Optional.
+   */
+  playerOnBoxGoal?: string;
 };
 
 export function parseRule(text: string): Rule {

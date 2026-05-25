@@ -6,6 +6,11 @@ import { serverBinary, model } from "./config.js";
 import { ensureServerReady } from "./bootstrap.js";
 import { decide, type Goal } from "./cmp/decide.js";
 import { COMPARATOR_NAMES, type ComparatorName } from "./cmp/index.js";
+import { setLogLevel } from "./logger.js";
+
+// Verbose search logging is ON by default; `--log=basic` silences the per-state
+// grid log (npm run dev/repl -- --log=basic).
+setLogLevel(process.argv.includes("--log=basic") ? "basic" : "verbose");
 
 const PROMPT = ">>> ";
 const CONT = "... ";
@@ -22,6 +27,7 @@ function banner(): void {
   console.log("Type a question or paste a grid over one or more lines, then a BLANK line to run it.");
   console.log('e.g. "is twelve greater than fourteen?", Enter, then Enter again on a blank line.');
   console.log("A pasted grid is SOLVED by default (shortest path of @ to the goal x).");
+  console.log("Grid search logs each state in priority order; run with --log=basic to silence it.");
   console.log("Commands start with ':' (e.g. :help, :quit) and run on their own line.");
 }
 

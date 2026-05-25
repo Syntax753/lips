@@ -90,6 +90,22 @@ test("expand: covering only one of two box goals is not yet a win", () => {
   assert.equal(covered!.score, 1); // one uncovered goal
 });
 
+test("expand (full Sokoban): a box on a goal '*' can be pushed off again", () => {
+  // Pushing the '*' right frees its goal ('~'), the box lands on floor ('+'),
+  // and the player ends standing on the freed box goal ('&').
+  assert.deepEqual(
+    expand("@*.").states.map((s) => s.grid),
+    [".&+"],
+  );
+});
+
+test("expand: the player can walk across an empty box goal '~' (-> '&')", () => {
+  assert.deepEqual(
+    expand("@~.").states.map((s) => s.grid),
+    [".&."],
+  );
+});
+
 test("goalMet: win = all box goals covered AND the player on 'x'", () => {
   assert.equal(goalMet("..X").met, true); // player on goal, no box goals
   assert.equal(goalMet("..@").met, false); // no goals at all is not a win

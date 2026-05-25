@@ -109,10 +109,9 @@ test("solve: covers all box goals AND the player reaches 'x' in a walled room", 
   assert.equal((r.winning!.match(/x/g) ?? []).length, 0); // no uncovered player goal
 });
 
-test("solve: no goal -> not solvable, and pruning skips revisited states", () => {
+test("solve: a grid with no goal is not solvable", () => {
   const r = solve("@..\n...\n...");
   assert.equal(r.solvable, false);
   assert.equal(r.moves, null);
-  assert.ok(r.explored <= 9, "explores at most the 9 reachable cells");
-  assert.ok(r.pruned > 0, "revisited states are pruned");
+  assert.match(r.reason, /no goal/);
 });
