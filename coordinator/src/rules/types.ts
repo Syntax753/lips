@@ -15,6 +15,8 @@ export type RuleSet = {
   floor: string;
   /** Victory glyph — a move that lands the player on it is success. */
   goal: string;
+  /** Impassable glyph: no subject may ever move onto it (e.g. a wall). Optional. */
+  wall?: string;
 };
 
 export function parseRule(text: string): Rule {

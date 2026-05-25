@@ -41,8 +41,18 @@ test("expand flags success and scores proximity to the goal", () => {
   assert.equal(miss!.score, 2); // moved down to (1,0); goal at (0,1) -> Manhattan 2
 });
 
-test("expand rejects a ragged grid", () => {
-  const r = expand("...\n.@");
-  assert.equal(r.ok, false);
-  assert.match(r.reason, /same width/);
+test("expand treats '#' walls as impassable", () => {
+  // Walls sit directly above and left of @. Only right and down are legal.
+  const r = expand(".#.\n#@.\n...");
+  assert.equal(r.ok, true);
+  assert.equal(r.count, 2);
+  assert.deepEqual(
+    new Set(r.states.map((s) => s.grid)),
+    new Set([
+      ".#.\n#.@\n...", // right
+      ".#.\n#..\n.@.", // down
+    ]),
+  );
+  // Every next state keeps both walls intact (none was overwritten by the move).
+  assert.ok(r.states.every((s) => (s.grid.match(/#/g) ?? []).length === 2));
 });

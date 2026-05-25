@@ -82,6 +82,9 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
           const nr = r + dr;
           const nc = c + dc;
           if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
+          // Walls are impassable: the subject may never move onto one, whatever
+          // the MOV rules happen to allow.
+          if (ruleset.wall && rows[nr][nc] === ruleset.wall) continue;
           if (rows[nr][nc] !== rule.object) continue;
 
           const next = rows.map((row) => row.split(""));
@@ -110,7 +113,7 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
 
 export const statemachineTool = tool(
   "statemachine",
-  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. Each has `grid`, `success` (true if it lands the player on the goal 'x'), and `score` (Manhattan distance of the player to the goal; lower = closer). `success` at top level is true if any next state wins.",
+  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable. Each has `grid`, `success` (true if it lands the player on the goal 'x'), and `score` (Manhattan distance of the player to the goal; lower = closer). `success` at top level is true if any next state wins.",
   {
     grid: z.string().describe("the current state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

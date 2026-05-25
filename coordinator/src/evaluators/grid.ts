@@ -80,7 +80,7 @@ export function evaluateMoves(
 
 export const gridvalidTool = tool(
   "gridvalid",
-  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Returns ok=true/false plus the dimensions.",
+  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Floor '.', goal 'x' and wall '#' are all valid cells. Returns ok=true/false plus the dimensions.",
   { grid: z.string().describe("the state as an ASCII grid") },
   async (args) => {
     const r = gridValid(args.grid);

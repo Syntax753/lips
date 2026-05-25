@@ -32,6 +32,23 @@ test("bestMove: optimal next step, and re-applying plays it out", () => {
   assert.equal(r2.move, "..@\n...\n...");
 });
 
+test("solve: routes around '#' walls and reports the detour length", () => {
+  // A wall column between @ and x: the straight path is blocked, so the player
+  // detours down, across the open bottom row, and back up — 6 moves.
+  const r = solve("@#x\n.#.\n...");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 6);
+  // The walls are never stepped on: every grid on the path keeps both '#'.
+  assert.ok(r.path!.every((g) => (g.match(/#/g) ?? []).length === 2));
+});
+
+test("solve: walls can make the goal unreachable", () => {
+  // '#' fully walls the goal off from the player.
+  const r = solve("@..\n###\n..x");
+  assert.equal(r.solvable, false);
+  assert.equal(r.moves, null);
+});
+
 test("solve: no goal -> not solvable, and pruning skips revisited states", () => {
   const r = solve("@..\n...\n...");
   assert.equal(r.solvable, false);

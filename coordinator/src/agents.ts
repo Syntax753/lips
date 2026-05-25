@@ -145,7 +145,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   agents[STATE_SPECIALIST] = {
     description: "Handles game states given as ASCII grids: lists all next states, validates a grid.",
     prompt: [
-      "You handle game-state grids.",
+      "You handle game-state grids. The player is '@', floor '.', goal 'x', and walls '#' are impassable.",
       `To list ALL possible next states, call \`${STATEMACHINE_TOOL}\` with { grid, ruleset } (ruleset`,
       'defaults to "sokoban"); reply with the full list of resulting grids it returns.',
       `To check a grid is well-formed, call \`${GRIDVALID_TOOL}\`. Do not simulate moves yourself.`,
@@ -162,7 +162,8 @@ export function specialistAgents(): Record<string, AgentDefinition> {
     description:
       "Grid-solving specialist: runs ONE breadth-first search (popping the queue, pruning seen states) and returns the OPTIMAL path and the minimum move count (or 'unsolvable').",
     prompt: [
-      "You solve grid puzzles with the deterministic resolver (ruleset default sokoban, goal 'x').",
+      "You solve grid puzzles with the deterministic resolver (ruleset default sokoban): player '@',",
+      "floor '.', goal 'x', and walls '#' that are impassable (the search routes around them).",
       `Call \`${SOLVE_TOOL}\` ONCE with { grid, ruleset }. It runs a breadth-first search — repeatedly`,
       "popping states off the queue, expanding successors, and pruning states already seen — until it",
       "reaches the goal. It returns { solvable, moves (the MINIMUM), path (start..goal), explored,",
