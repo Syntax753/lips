@@ -1,5 +1,5 @@
 import type { AgentDefinition, McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
-import { serverBinary, model } from "./config.js";
+import { serverBinary, model, complexModel } from "./config.js";
 import { OPERATORS } from "./parser.js";
 import { decisionServer, DECISION_SERVER, DECIDE_TOOL } from "./decisionTool.js";
 import {
@@ -102,7 +102,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       '("max" | "min"). Reply with the better value, or "tie".',
     ].join(" "),
     tools: [DECIDE_TOOL],
-    model,
+    model: complexModel, // ranks text and JSON outcome objects, not just numbers
     maxTurns: 3,
   };
 
@@ -126,7 +126,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       `\`${CONVERTER_TOOLS[1]}\` to pull an id field out of a JSON object. Reply with ONLY the result.`,
     ].join(" "),
     tools: [...CONVERTER_TOOLS],
-    model,
+    model: complexModel, // parses number-words, digit strings and JSON
     maxTurns: 3,
   };
 
@@ -138,7 +138,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       "suggested converter.",
     ].join(" "),
     tools: [COMPARABLE_TOOL],
-    model,
+    model: complexModel, // reasons about value/type compatibility
     maxTurns: 3,
   };
 
@@ -151,7 +151,7 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       `To check a grid is well-formed, call \`${GRIDVALID_TOOL}\`. Do not simulate moves yourself.`,
     ].join(" "),
     tools: [STATEMACHINE_TOOL, GRIDVALID_TOOL],
-    model,
+    model: complexModel, // multi-line ASCII grids
     maxTurns: 3,
   };
 
@@ -172,8 +172,8 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       `You may validate the grid first with \`${GRIDVALID_TOOL}\`. Never search or move by hand.`,
     ].join(" "),
     tools: [SOLVE_TOOL, GRIDVALID_TOOL],
-    model,
-    maxTurns: 3,
+    model: complexModel, // multi-line ASCII grids — passing them verbatim needs the stronger model
+    maxTurns: 5,
   };
 
   return agents;
@@ -226,17 +226,19 @@ export function coordinatorSystemPrompt(): string {
     `  EVALUATE — unsure whether two values can be compared at all:`,
     `         -> "${EVALUATOR_SPECIALIST}"  (returns ok + a suggested converter when not comparable).`,
     "",
-    `  STATE / GRID (list moves) — a grid, asked for its next states / possible moves:`,
-    `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states; relay the full list).`,
-    "            A bare grid with NO instruction defaults here — list the next states.",
+    `  STATE / GRID (ONE step) — ONLY when explicitly asked for the IMMEDIATE legal moves from a single`,
+    `         state ("what moves can @ make from here?", "list the next states"):`,
+    `         -> "${STATE_SPECIALIST}"  (returns the immediate next states — ONE step only; relay the list).`,
+    "            Do NOT use this to solve a grid — it does not search past the first move.",
     "",
-    `  SOLVE a grid — "is it solvable?", "how many moves?", "what's the optimal play?", or as a value`,
-    "         for a comparison:",
-    `         -> "${STATE_SOLVER}"  (ONE breadth-first search: it pops states off the queue and prunes`,
-    "            seen ones until it reaches the goal, then returns the MINIMUM move count and the optimal",
-    "            path). Report the move count and/or the path. The move count is a value like any other:",
-    "            feed it into a comparator / arithmetic (e.g. \"fewer than 4?\"), or compare two grids by",
-    "            solving EACH and comparing their counts.",
+    `  SOLVE a grid — the DEFAULT for a pasted grid, and for "is it solvable?", "how many moves?", "find`,
+    `         the path", "can @ reach x?", "what's the optimal play?", or as a value for a comparison:`,
+    `         -> "${STATE_SOLVER}"  (the FULL breadth-first search: it keeps POPPING states off the queue,`,
+    "            expanding every possible move and pruning already-seen ones, until @ reaches the goal 'x'",
+    "            OR the queue empties — then returns the MINIMUM move count and the optimal path). A bare",
+    "            grid with NO instruction defaults HERE — SOLVE it (do not merely list the first moves).",
+    "            Report the move count and/or path; the count is a value you can feed into a comparator /",
+    "            arithmetic (e.g. \"fewer than 4?\"), or compare two grids by solving EACH.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",

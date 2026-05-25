@@ -23,8 +23,11 @@ export const serverBinary =
   path.join(goServerDir, "bin", binaryName);
 
 /**
- * Model alias used by both the coordinator and the comparator specialists.
- * Routing + a single tool call is well within Haiku's reach, so default there
- * to keep the "distributed" fan-out cheap. Override with LIPS_MODEL.
+ * Model aliases. Routing, plain-number comparisons, arithmetic and simple
+ * algebra are well within Haiku's reach, so they stay on the cheap/fast model
+ * to keep the "distributed" fan-out cheap. Richer data types — game-state
+ * grids, JSON objects, text/type conversion — are handled by a stronger model
+ * for reliability. Override with LIPS_MODEL / LIPS_COMPLEX_MODEL.
  */
 export const model = process.env.LIPS_MODEL ?? "haiku";
+export const complexModel = process.env.LIPS_COMPLEX_MODEL ?? "sonnet";

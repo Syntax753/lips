@@ -21,6 +21,7 @@ function banner(): void {
   console.log(`coordinator model: ${model}   server: ${serverBinary}`);
   console.log("Type a question or paste a grid over one or more lines, then a BLANK line to run it.");
   console.log('e.g. "is twelve greater than fourteen?", Enter, then Enter again on a blank line.');
+  console.log("A pasted grid is SOLVED by default (shortest path of @ to the goal x).");
   console.log("Commands start with ':' (e.g. :help, :quit) and run on their own line.");
 }
 
@@ -31,7 +32,7 @@ function help(): void {
       "  <text…>                         Your input over one or more lines (a question, or paste a grid).",
       "                                  A BLANK line submits the block to the coordinator; :cancel clears it.",
       '                                    "is 12 greater than 14?" + blank line   -> false',
-      "                                    paste a grid + blank line               -> all next states",
+      "                                    paste a grid + blank line               -> solve it (shortest path to x)",
       "  :direct <expr>                  Boolean compare via the Go server directly (no model).",
       "  :decide <kind> <goal> <a> <b>   Decide locally (no model). kind=numeric|alpha, goal=max|min.",
       "                                  Prints -1 (a better) / +1 (b better) / 0 (tie).",

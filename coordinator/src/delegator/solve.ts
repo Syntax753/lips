@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { expand } from "./statemachine.js";
+import { evaluateMoves } from "../evaluators/grid.js";
 import { getRuleSet, DEFAULT_RULESET } from "../rules/index.js";
 
 /**
@@ -13,13 +13,18 @@ import { getRuleSet, DEFAULT_RULESET } from "../rules/index.js";
  * fast as new grid elements/interactions are added.
  */
 
+/** What happened to one candidate next tile when a state was expanded. */
+export type MoveDisposition = {
+  grid: string; // the next state, rows joined with " / "
+  status: "queued" | "seen" | "goal"; // added to queue / already seen / wins
+};
+
 /** One iteration of the search loop: a state popped off the frontier. */
 export type SearchStep = {
   step: number; // pop order (1-based)
   grid: string; // the dequeued state, rows joined with " / "
   depth: number; // moves from the start
-  pushed: number; // new successors enqueued from this pop
-  pruned: number; // successors skipped (already seen)
+  moves: MoveDisposition[]; // EVERY possible next tile and what happened to it
   goal: boolean; // this pop produced the winning move
 };
 
@@ -92,13 +97,25 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
     const current = queue[head++];
     explored++;
     const depth = depthOf.get(current) ?? 0;
-    const exp = expand(current, ruleset.name);
-    if (!exp.ok) return fail(exp.reason, false);
+
+    // The grid evaluator enumerates EVERY possible next tile, then tells us which
+    // are not yet in the queue or processed (`fresh`) versus already seen.
+    const ev = evaluateMoves(current, (s) => visited.has(s), ruleset.name);
+    if (!ev.ok) return fail(ev.reason, false);
 
     // BFS processes by increasing depth, so the first winning move is shortest.
-    const win = exp.states.find((s) => s.success);
+    const win = ev.candidates.find((s) => s.success);
     if (win) {
-      trace.push({ step: explored, grid: compact(current), depth, pushed: 0, pruned: 0, goal: true });
+      trace.push({
+        step: explored,
+        grid: compact(current),
+        depth,
+        goal: true,
+        moves: ev.candidates.map((s) => ({
+          grid: compact(s.grid),
+          status: s.success ? "goal" : visited.has(s.grid) ? "seen" : "queued",
+        })),
+      });
       const path = reconstruct(parent, current).concat(win.grid);
       return {
         ok: true,
@@ -115,22 +132,25 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       };
     }
 
-    let pushedHere = 0;
-    let prunedHere = 0;
-    for (const s of exp.states) {
-      if (visited.has(s.grid)) {
-        pruned++;
-        prunedHere++;
-        continue;
-      }
+    // Add every fresh next tile to the queue; skip (prune) the already-seen ones.
+    for (const s of ev.fresh) {
       visited.add(s.grid);
       parent.set(s.grid, current);
       depthOf.set(s.grid, depth + 1);
       queue.push(s.grid);
       pushed++;
-      pushedHere++;
     }
-    trace.push({ step: explored, grid: compact(current), depth, pushed: pushedHere, pruned: prunedHere, goal: false });
+    pruned += ev.seen.length;
+    trace.push({
+      step: explored,
+      grid: compact(current),
+      depth,
+      goal: false,
+      moves: [
+        ...ev.fresh.map((s) => ({ grid: compact(s.grid), status: "queued" as const })),
+        ...ev.seen.map((s) => ({ grid: compact(s.grid), status: "seen" as const })),
+      ],
+    });
   }
 
   return fail("frontier exhausted — no path to the goal");

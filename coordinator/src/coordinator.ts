@@ -166,11 +166,22 @@ function searchTrace(result: string | null): SearchTraceView | null {
     (x): x is Record<string, unknown> => typeof x === "object" && x !== null && "grid" in x,
   );
   if (steps.length === 0) return null; // not a search trace (e.g. the algebra op-trace)
-  const pops = steps.map((t) =>
-    t.goal
-      ? `pop ${t.step} (depth ${t.depth}): ${t.grid}  -> GOAL`
-      : `pop ${t.step} (depth ${t.depth}): ${t.grid}  -> +${t.pushed} frontier, ${t.pruned} pruned`,
-  );
+  const label = (status: string): string =>
+    status === "goal" ? "GOAL" : status === "queued" ? "-> queue" : "already seen (skip)";
+  const pops: string[] = [];
+  for (const t of steps) {
+    const moves = Array.isArray(t.moves) ? (t.moves as { grid: string; status: string }[]) : [];
+    if (t.goal) {
+      pops.push(`pop ${t.step} (depth ${t.depth}): ${t.grid}  -> GOAL`);
+    } else {
+      const queued = moves.filter((m) => m.status === "queued").length;
+      const seen = moves.filter((m) => m.status === "seen").length;
+      pops.push(
+        `pop ${t.step} (depth ${t.depth}): ${t.grid}  -> ${moves.length} possible move(s): ${queued} queued, ${seen} already seen`,
+      );
+    }
+    for (const m of moves) pops.push(`    ${m.grid}  ${label(m.status)}`);
+  }
   const header = `BFS — popped ${o.explored} states off the queue, pruned ${o.pruned ?? 0} already-seen:`;
   const path = Array.isArray(o.path) ? (o.path as string[]).map((g) => g.replace(/\n/g, " / ")) : [];
   const summary = o.solvable
