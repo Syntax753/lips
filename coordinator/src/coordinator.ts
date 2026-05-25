@@ -132,9 +132,63 @@ function embeddedTrace(result: string | null): EmbeddedTrace | null {
   return { ops, summary };
 }
 
+interface SearchTraceView {
+  header: string;
+  pops: string[];
+  summary: string;
+}
+
+/**
+ * If a result is the grid solver's BFS trace, render the search as it ran: one
+ * line per state popped off the queue (with frontier growth / pruning), then the
+ * optimal solution. This is the "keep popping the queue" search made visible.
+ */
+function searchTrace(result: string | null): SearchTraceView | null {
+  if (!result) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(result);
+  } catch {
+    return null;
+  }
+  if (typeof obj !== "object" || obj === null) return null;
+  const o = obj as {
+    trace?: unknown;
+    explored?: unknown;
+    pruned?: unknown;
+    solvable?: unknown;
+    moves?: unknown;
+    path?: unknown;
+    reason?: unknown;
+  };
+  if (!Array.isArray(o.trace)) return null;
+  const steps = o.trace.filter(
+    (x): x is Record<string, unknown> => typeof x === "object" && x !== null && "grid" in x,
+  );
+  if (steps.length === 0) return null; // not a search trace (e.g. the algebra op-trace)
+  const pops = steps.map((t) =>
+    t.goal
+      ? `pop ${t.step} (depth ${t.depth}): ${t.grid}  -> GOAL`
+      : `pop ${t.step} (depth ${t.depth}): ${t.grid}  -> +${t.pushed} frontier, ${t.pruned} pruned`,
+  );
+  const header = `BFS — popped ${o.explored} states off the queue, pruned ${o.pruned ?? 0} already-seen:`;
+  const path = Array.isArray(o.path) ? (o.path as string[]).map((g) => g.replace(/\n/g, " / ")) : [];
+  const summary = o.solvable
+    ? `solvable in ${o.moves} move(s) — optimal path: ${path.join("  =>  ")}`
+    : `not solvable: ${String(o.reason ?? "")}`;
+  return { header, pops, summary };
+}
+
 /** Emit a tool result at `depth`, expanding an embedded op-trace if present. */
 function emitResult(depth: number, result: string | null, emit: (line: string) => void): void {
   const inner = "  ".repeat(depth);
+  const search = searchTrace(result);
+  if (search) {
+    emit(`${inner}${search.header}`);
+    for (const pop of search.pops) emit(`${inner}  ${pop}`);
+    emit(`${inner}--> ${search.summary}`);
+    return;
+  }
   const embedded = embeddedTrace(result);
   if (embedded) {
     for (const op of embedded.ops) {
@@ -177,7 +231,9 @@ export async function coordinate(
     agents: specialistAgents(),
     canUseTool,
     permissionMode: "default",
-    maxTurns: 30,
+    // The main coordinator now drives the per-move iteration for grid solving,
+    // so it needs room for one delegation per move.
+    maxTurns: 60,
   };
 
   emit(`coordinator (${expression})`);

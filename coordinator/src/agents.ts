@@ -7,7 +7,7 @@ import {
   DELEGATOR_SERVER,
   ALGEBRAIC_TOOL,
   STATEMACHINE_TOOL,
-  BESTMOVE_TOOL,
+  SOLVE_TOOL,
 } from "./delegator/index.js";
 import { arithmeticServer, OPS_SERVER, ARITHMETIC_TOOLS } from "./ops/arithmetic.js";
 import { convertersServer, CONVERTERS_SERVER, CONVERTER_TOOLS } from "./converters/index.js";
@@ -155,26 +155,25 @@ export function specialistAgents(): Record<string, AgentDefinition> {
     maxTurns: 3,
   };
 
-  // A sub-coordinator specialised in grid states. It uses the deterministic
-  // `solve` resolver (a single reliable tool call) and hands a boolean — and the
-  // move count — back up to the main coordinator.
+  // Grid-solving specialist. ONE call to the deterministic resolver runs the
+  // whole breadth-first search — popping the frontier, pruning seen states —
+  // and yields the optimal path and the minimum move count in a single search.
   agents[STATE_SOLVER] = {
     description:
-      "Sub-coordinator that SOLVES a grid puzzle by playing the optimal moves one at a time (can @ reach the goal 'x', in how many moves, and the move-by-move play). Deterministic via bestmove.",
+      "Grid-solving specialist: runs ONE breadth-first search (popping the queue, pruning seen states) and returns the OPTIMAL path and the minimum move count (or 'unsolvable').",
     prompt: [
-      "You solve grid puzzles by PLAYING the optimal sequence ONE MOVE AT A TIME with bestmove. The",
-      "ruleset (default sokoban) has goal 'x'. The tool is deterministic — never search or move yourself.",
-      `LOOP: call \`${BESTMOVE_TOOL}\` on the current grid — it returns the best next grid, reachedGoal, and`,
-      "movesRemaining. If reachedGoal is true, STOP. Otherwise call it AGAIN on the grid it just returned,",
-      "and repeat. This is a clear LINEAR chain of best moves, each based on the previous one.",
-      "Report the ordered grids (the optimal play) and the total number of moves.",
-      `For "how many moves", the first \`${BESTMOVE_TOOL}\`'s movesRemaining is the count (still play it out).`,
-      `If bestmove reports solvable=false the grid is unsolvable. Optionally validate first with \`${GRIDVALID_TOOL}\`.`,
+      "You solve grid puzzles with the deterministic resolver (ruleset default sokoban, goal 'x').",
+      `Call \`${SOLVE_TOOL}\` ONCE with { grid, ruleset }. It runs a breadth-first search — repeatedly`,
+      "popping states off the queue, expanding successors, and pruning states already seen — until it",
+      "reaches the goal. It returns { solvable, moves (the MINIMUM), path (start..goal), explored,",
+      "pushed, pruned }.",
+      "Report: the minimum move count, and the optimal path as the ordered sequence of grids. If",
+      "solvable is false, say so. Lead your reply with the move count as a number so it can be compared.",
+      `You may validate the grid first with \`${GRIDVALID_TOOL}\`. Never search or move by hand.`,
     ].join(" "),
-    tools: [BESTMOVE_TOOL, GRIDVALID_TOOL],
+    tools: [SOLVE_TOOL, GRIDVALID_TOOL],
     model,
-    // One turn per move in the play-out loop.
-    maxTurns: 30,
+    maxTurns: 3,
   };
 
   return agents;
@@ -231,11 +230,13 @@ export function coordinatorSystemPrompt(): string {
     `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states; relay the full list).`,
     "            A bare grid with NO instruction defaults here — list the next states.",
     "",
-    `  SOLVE / SEARCH / PLAY — "can this grid be solved?", "how many moves?", "best move?", "best play?":`,
-    `         -> "${STATE_SOLVER}"  (a sub-coordinator over the deterministic solver: returns solvable +`,
-    "            the MINIMUM move count, the single best move, or the full optimal play). Report what was",
-    "            asked (move count / best move / the play sequence) and compose its boolean (AND / OR)",
-    "            with any other parts of the request.",
+    `  SOLVE a grid — "is it solvable?", "how many moves?", "what's the optimal play?", or as a value`,
+    "         for a comparison:",
+    `         -> "${STATE_SOLVER}"  (ONE breadth-first search: it pops states off the queue and prunes`,
+    "            seen ones until it reaches the goal, then returns the MINIMUM move count and the optimal",
+    "            path). Report the move count and/or the path. The move count is a value like any other:",
+    "            feed it into a comparator / arithmetic (e.g. \"fewer than 4?\"), or compare two grids by",
+    "            solving EACH and comparing their counts.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",

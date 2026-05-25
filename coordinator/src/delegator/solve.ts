@@ -13,6 +13,16 @@ import { getRuleSet, DEFAULT_RULESET } from "../rules/index.js";
  * fast as new grid elements/interactions are added.
  */
 
+/** One iteration of the search loop: a state popped off the frontier. */
+export type SearchStep = {
+  step: number; // pop order (1-based)
+  grid: string; // the dequeued state, rows joined with " / "
+  depth: number; // moves from the start
+  pushed: number; // new successors enqueued from this pop
+  pruned: number; // successors skipped (already seen)
+  goal: boolean; // this pop produced the winning move
+};
+
 export type SolveResult = {
   ok: boolean;
   solvable: boolean;
@@ -23,6 +33,7 @@ export type SolveResult = {
   pruned: number; // states skipped because already seen
   path: string[] | null; // start .. winning grid
   winning: string | null;
+  trace: SearchStep[]; // the queue pops, in order — the search made visible
   reason: string;
 };
 
@@ -31,6 +42,11 @@ function normalize(grid: string): string {
   const rows = grid.replace(/\r/g, "").split("\n");
   while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
   return rows.join("\n");
+}
+
+/** Collapse a grid's rows onto one line so a pop fits a single trace line. */
+function compact(grid: string): string {
+  return grid.split("\n").join(" / ");
 }
 
 function reconstruct(parent: Map<string, string | null>, node: string): string[] {
@@ -51,6 +67,8 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   let head = 0;
   const visited = new Set<string>([start]);
   const parent = new Map<string, string | null>([[start, null]]);
+  const depthOf = new Map<string, number>([[start, 0]]);
+  const trace: SearchStep[] = [];
   let explored = 0;
   let pushed = 1;
   let pruned = 0;
@@ -65,18 +83,22 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
     pruned,
     path: null,
     winning: null,
+    trace,
     reason,
   });
 
+  // Keep popping the frontier until the goal is reached or the queue drains.
   while (head < queue.length) {
     const current = queue[head++];
     explored++;
+    const depth = depthOf.get(current) ?? 0;
     const exp = expand(current, ruleset.name);
     if (!exp.ok) return fail(exp.reason, false);
 
     // BFS processes by increasing depth, so the first winning move is shortest.
     const win = exp.states.find((s) => s.success);
     if (win) {
+      trace.push({ step: explored, grid: compact(current), depth, pushed: 0, pruned: 0, goal: true });
       const path = reconstruct(parent, current).concat(win.grid);
       return {
         ok: true,
@@ -88,20 +110,27 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
         pruned,
         path,
         winning: win.grid,
+        trace,
         reason: "goal reached",
       };
     }
 
+    let pushedHere = 0;
+    let prunedHere = 0;
     for (const s of exp.states) {
       if (visited.has(s.grid)) {
         pruned++;
+        prunedHere++;
         continue;
       }
       visited.add(s.grid);
       parent.set(s.grid, current);
+      depthOf.set(s.grid, depth + 1);
       queue.push(s.grid);
       pushed++;
+      pushedHere++;
     }
+    trace.push({ step: explored, grid: compact(current), depth, pushed: pushedHere, pruned: prunedHere, goal: false });
   }
 
   return fail("frontier exhausted — no path to the goal");
@@ -173,9 +202,10 @@ export const solveTool = tool(
   },
   async (args) => {
     const r = solve(args.grid, args.ruleset ?? DEFAULT_RULESET);
+    const path = r.path ? r.path.map(compact) : [];
     const text = r.solvable
-      ? `solvable in ${r.moves} move(s) (explored ${r.explored}, pruned ${r.pruned})`
-      : `not solvable — ${r.reason} (explored ${r.explored}, pruned ${r.pruned})`;
+      ? `solvable in ${r.moves} move(s) (popped ${r.explored} off the queue, pruned ${r.pruned}); optimal path: ${path.join("  =>  ")}`
+      : `not solvable — ${r.reason} (popped ${r.explored} off the queue, pruned ${r.pruned})`;
     return { content: [{ type: "text", text }], structuredContent: r };
   },
 );
