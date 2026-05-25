@@ -8,7 +8,14 @@ export type Verb = "MOV";
 
 export type Rule = { subject: string; verb: Verb; object: string };
 
-export type RuleSet = { name: string; rules: Rule[] };
+export type RuleSet = {
+  name: string;
+  rules: Rule[];
+  /** Glyph left behind when a subject moves off a cell (the floor). */
+  floor: string;
+  /** Victory glyph — a move that lands the player on it is success. */
+  goal: string;
+};
 
 export function parseRule(text: string): Rule {
   const parts = text.trim().split(/\s+/);

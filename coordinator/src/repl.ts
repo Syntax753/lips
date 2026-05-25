@@ -11,6 +11,10 @@ const PROMPT = ">>> ";
 const CONT = "... ";
 /** Lines accumulated for the current input; a blank line submits the block. */
 const buffer: string[] = [];
+/** Timestamp of the last content line, to tell a deliberate blank line apart
+ *  from the LF that follows a pasted CRLF (which arrives within a few ms). */
+let lastContentAt = 0;
+const BLANK_SUBMIT_MS = 100;
 
 function banner(): void {
   console.log("lips — symbolic-logic coordinator REPL");
@@ -136,7 +140,8 @@ async function dispatch(line: string): Promise<void> {
  * `:ml` family starts a multiline block. Inside multiline mode every line is
  * accumulated until a blank line (submit) or `:cancel` (abort).
  */
-async function onLine(line: string): Promise<void> {
+async function onLine(raw: string): Promise<void> {
+  const line = raw.replace(/\r/g, ""); // strip CR so pasted CRLF doesn't leak in
   // At the start of a fresh input, a ':' line is a command and runs immediately.
   if (buffer.length === 0 && line.trim().startsWith(":")) {
     await dispatch(line);
@@ -148,15 +153,19 @@ async function onLine(line: string): Promise<void> {
     console.log("  (input cleared)");
     return;
   }
-  // A blank line submits the accumulated block.
   if (line.trim() === "") {
     if (buffer.length === 0) return;
+    // Ignore a blank that lands right after content — it's the LF half of a
+    // pasted CRLF newline, not a deliberate submit. A real blank line (typed
+    // after a pause) submits the block.
+    if (Date.now() - lastContentAt < BLANK_SUBMIT_MS) return;
     const text = buffer.join("\n");
     buffer.length = 0;
     await runCoordinator(text);
     return;
   }
   buffer.push(line);
+  lastContentAt = Date.now();
 }
 
 const rl = readline.createInterface({

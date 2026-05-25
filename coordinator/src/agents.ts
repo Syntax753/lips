@@ -16,6 +16,14 @@ import {
   COMPARABLE_TOOL,
   GRIDVALID_TOOL,
 } from "./evaluators/index.js";
+import {
+  stackServer,
+  STACK_SERVER,
+  STACK_TOOLS,
+  STACK_PUSH_TOOL,
+  STACK_POP_TOOL,
+  STACK_RESET_TOOL,
+} from "./stack/index.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -32,6 +40,7 @@ export const ALGEBRA_SPECIALIST = "algebra-specialist";
 export const CONVERTER_SPECIALIST = "converter-specialist";
 export const EVALUATOR_SPECIALIST = "evaluator-specialist";
 export const STATE_SPECIALIST = "state-specialist";
+export const STATE_SOLVER = "state-solver";
 
 /**
  * Every tool server is registered here, session-wide. The coordinator is still
@@ -47,6 +56,7 @@ export function mcpServers(): Record<string, McpServerConfig> {
     [OPS_SERVER]: arithmeticServer(),
     [CONVERTERS_SERVER]: convertersServer(),
     [EVALUATORS_SERVER]: evaluatorsServer(),
+    [STACK_SERVER]: stackServer(),
   };
 }
 
@@ -153,6 +163,32 @@ export function specialistAgents(): Record<string, AgentDefinition> {
     maxTurns: 3,
   };
 
+  // A sub-coordinator: it orchestrates the state-space SEARCH entirely through
+  // tools (statemachine + stack), reliably, inside its own context — then hands
+  // a boolean (solvable) back up to the main coordinator.
+  agents[STATE_SOLVER] = {
+    description:
+      "Sub-coordinator that SOLVES a grid puzzle by searching the state space (does @ reach the goal 'x'?). Returns whether it is solvable, plus the winning grid.",
+    prompt: [
+      "You solve a grid puzzle by SEARCHING the state space with your tools. The ruleset (default",
+      "sokoban) defines the goal glyph 'x'; success is the player '@' reaching it. Do the bookkeeping",
+      "with the tools — never simulate moves yourself. Algorithm:",
+      `  1. Call \`${STACK_RESET_TOOL}\` to clear the frontier, then expand the START grid with`,
+      `     \`${STATEMACHINE_TOOL}\`.`,
+      "  2. If any returned next state has success=true, STOP — reply 'solvable: true' and that grid.",
+      `  3. Otherwise \`${STACK_PUSH_TOOL}\` the next states, ordered FARTHEST-first by their score (closest`,
+      "     ends up on top).",
+      `  4. \`${STACK_POP_TOOL}\` the top grid. If it reports empty, STOP — reply 'solvable: false'.`,
+      `  5. Expand the popped grid with \`${STATEMACHINE_TOOL}\` and return to step 2.`,
+      "The frontier's visited Set stops repeats, so the search terminates. Report the boolean and,",
+      "if solved, the winning grid.",
+    ].join("\n"),
+    tools: [STATEMACHINE_TOOL, ...STACK_TOOLS],
+    model,
+    // The search loop needs many tool turns.
+    maxTurns: 40,
+  };
+
   return agents;
 }
 
@@ -203,11 +239,14 @@ export function coordinatorSystemPrompt(): string {
     `  EVALUATE — unsure whether two values can be compared at all:`,
     `         -> "${EVALUATOR_SPECIALIST}"  (returns ok + a suggested converter when not comparable).`,
     "",
-    `  STATE / GRID — the input is (or contains) a game state as an ASCII grid (rows of '.', '@', etc.):`,
-    `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states for the ruleset, default`,
-    "            sokoban). Just relay the full list of resulting grids; do not move pieces yourself.",
-    "            If a grid arrives with NO other instruction, DEFAULT to listing all next states",
-    "            (do not ask what to do).",
+    `  STATE / GRID (list moves) — a grid, asked for its next states / possible moves:`,
+    `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states; relay the full list).`,
+    "            A bare grid with NO instruction defaults here — list the next states.",
+    "",
+    `  SOLVE / SEARCH — "can this grid be solved?", "can @ reach the goal x?", reach the goal:`,
+    `         -> "${STATE_SOLVER}"  (a sub-coordinator that searches the state space via tools and`,
+    "            returns whether it is solvable, plus the winning grid). Use its boolean result and",
+    "            compose it (AND / OR) with any other parts of the request.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",
