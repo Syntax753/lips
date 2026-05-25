@@ -360,6 +360,20 @@ function analyzeRooms(p: Parsed): { roomOf: Int32Array; goalRoom: boolean[] } {
   return { roomOf, goalRoom };
 }
 
+/**
+ * True if a box at `cell` pushed along (dr,dc) is in a 1-wide corridor: both
+ * cells perpendicular to travel are walls. The box then can't be diverted and
+ * the player can only follow directly behind, so a run of such cells collapses
+ * into a single "tunnel macro" push (cost-preserving, since each cell is still
+ * one real step).
+ */
+function corridorAlong(p: Parsed, cell: number, dr: number, dc: number): boolean {
+  const r = Math.floor(cell / p.w);
+  const c = cell % p.w;
+  const wall = (rr: number, cc: number): boolean => rr < 0 || rr >= p.h || cc < 0 || cc >= p.w || p.walls.has(rr * p.w + cc);
+  return dr === 0 ? wall(r - 1, c) && wall(r + 1, c) : wall(r, c - 1) && wall(r, c + 1);
+}
+
 const allCovered = (p: Parsed, boxes: Set<number>): boolean => {
   for (const g of p.boxGoals) if (!boxes.has(g)) return false;
   return true;
@@ -436,6 +450,265 @@ class Heap {
   }
 }
 
+// ─── Room decomposition (LIPS_SEARCH=decompose) ────────────────────────────
+// A satisficing solver for boards too large for the monolithic search: fill the
+// box goals one at a time. Each placed box is LOCKED (becomes a wall), so every
+// subsequent sub-search runs in a steadily smaller free space. Drops optimality.
+
+type Push = { box: number; to: number };
+
+/** Min pushes to move a box from each cell onto `target`, with walls and
+ * `blocked` cells (locked boxes) impassable. A reverse "pull" flood. */
+function pullDistFrom(p: Parsed, target: number, blocked: Set<number>): number[] {
+  const dist = new Array<number>(p.w * p.h).fill(Infinity);
+  dist[target] = 0;
+  const q = [target];
+  for (let hd = 0; hd < q.length; hd++) {
+    const c = q[hd];
+    const cr = Math.floor(c / p.w);
+    const cc = c % p.w;
+    for (const [dr, dc] of DIRS) {
+      const tr = cr + dr;
+      const tc = cc + dc;
+      const sr = cr + 2 * dr;
+      const sc = cc + 2 * dc;
+      if (tr < 0 || tr >= p.h || tc < 0 || tc >= p.w) continue;
+      if (sr < 0 || sr >= p.h || sc < 0 || sc >= p.w) continue;
+      const to = tr * p.w + tc;
+      const pull = sr * p.w + sc;
+      if (p.walls.has(to) || blocked.has(to) || p.walls.has(pull) || blocked.has(pull)) continue;
+      if (dist[to] === Infinity) {
+        dist[to] = dist[c] + 1;
+        q.push(to);
+      }
+    }
+  }
+  return dist;
+}
+
+/** goalDistances with extra `blocked` cells impassable (for deadlock checks once
+ * boxes are locked). Infinity = a box there can reach no remaining goal. */
+function goalDistancesBlocked(p: Parsed, blocked: Set<number>): number[] {
+  const dist = new Array<number>(p.w * p.h).fill(Infinity);
+  const q: number[] = [];
+  for (const g of p.boxGoals) if (!blocked.has(g) && dist[g] === Infinity) ((dist[g] = 0), q.push(g));
+  for (let hd = 0; hd < q.length; hd++) {
+    const c = q[hd];
+    const cr = Math.floor(c / p.w);
+    const cc = c % p.w;
+    for (const [dr, dc] of DIRS) {
+      const tr = cr + dr;
+      const tc = cc + dc;
+      const sr = cr + 2 * dr;
+      const sc = cc + 2 * dc;
+      if (tr < 0 || tr >= p.h || tc < 0 || tc >= p.w) continue;
+      if (sr < 0 || sr >= p.h || sc < 0 || sc >= p.w) continue;
+      const to = tr * p.w + tc;
+      const pull = sr * p.w + sc;
+      if (p.walls.has(to) || blocked.has(to) || p.walls.has(pull) || blocked.has(pull)) continue;
+      if (dist[to] === Infinity) {
+        dist[to] = dist[c] + 1;
+        q.push(to);
+      }
+    }
+  }
+  return dist;
+}
+
+/**
+ * Greedy best-first sub-search: push ANY free box onto `target`. `boxes` holds
+ * all boxes (locked ones included so they block movement); only non-locked boxes
+ * are pushed. Returns the resulting state and the push chain, or null if it can't
+ * within `cap` states. Single-cell pushes (no macros) — kept simple for the
+ * sub-problem.
+ */
+function coverGoal(
+  p: Parsed,
+  boxes0: Set<number>,
+  player0: number,
+  locked: Set<number>,
+  target: number,
+  goalDist: number[],
+  cap: number,
+): { found: { boxes: Set<number>; player: number; pushes: Push[]; cost: number } | null; explored: number } {
+  const tdist = pullDistFrom(p, target, locked);
+  const hOf = (boxes: Set<number>): number => {
+    if (boxes.has(target)) return 0;
+    let m = Infinity;
+    for (const b of boxes) if (!locked.has(b) && tdist[b] < m) m = tdist[b];
+    return m;
+  };
+  if (hOf(boxes0) === Infinity) return { found: null, explored: 0 }; // no free box can ever reach target
+
+  const reached = new Map<string, Entry>();
+  const heap = new Heap();
+  const s0 = regionInfo(p, boxes0, player0);
+  const sKey = `${boxesKey(boxes0)}|${s0.canonical}`;
+  reached.set(sKey, { g: 0, parent: null, viaBox: -1, viaTo: -1 });
+  heap.push({ key: sKey, player: player0, g: 0, h: 0, unc: 0, nhome: 0, pri: hOf(boxes0), region: s0.size });
+  let explored = 0;
+
+  while (heap.size > 0) {
+    const cur = heap.pop()!;
+    const entry = reached.get(cur.key);
+    if (!entry || entry.g !== cur.g) continue;
+    const boxes = parseBoxes(cur.key);
+    if (boxes.has(target)) {
+      // success — reconstruct the push chain back to the start
+      const pushes: Push[] = [];
+      for (let k: string | null = cur.key; k !== null; ) {
+        const e: Entry = reached.get(k)!;
+        if (e.viaBox >= 0) pushes.push({ box: e.viaBox, to: e.viaTo });
+        k = e.parent;
+      }
+      pushes.reverse();
+      return { found: { boxes, player: cur.player, pushes, cost: cur.g }, explored };
+    }
+    explored++;
+    if (explored > cap) return { found: null, explored };
+    const { dist } = walkBFS(p, boxes, cur.player); // locked boxes are in `boxes`, so they block
+    for (const b of boxes) {
+      if (locked.has(b)) continue; // never push a locked box
+      const br = Math.floor(b / p.w);
+      const bc = b % p.w;
+      for (const [dr, dc] of DIRS) {
+        if (br + dr < 0 || br + dr >= p.h || bc + dc < 0 || bc + dc >= p.w) continue;
+        if (br - dr < 0 || br - dr >= p.h || bc - dc < 0 || bc - dc >= p.w) continue;
+        const far = (br + dr) * p.w + (bc + dc);
+        const pushFrom = (br - dr) * p.w + (bc - dc);
+        if (p.walls.has(far) || locked.has(far) || boxes.has(far)) continue;
+        if (goalDist[far] === Infinity) continue; // box would strand off all goals
+        if (!dist.has(pushFrom)) continue;
+        const boxes2 = new Set(boxes);
+        boxes2.delete(b);
+        boxes2.add(far);
+        if (freezeDeadlock(p, boxes2, goalDist, far)) continue;
+        const cost = cur.g + (dist.get(pushFrom) ?? 0) + 1;
+        const info = regionInfo(p, boxes2, b);
+        const key2 = `${boxesKey(boxes2)}|${info.canonical}`;
+        const prev2 = reached.get(key2);
+        if (prev2 !== undefined && prev2.g <= cost) continue;
+        reached.set(key2, { g: cost, parent: cur.key, viaBox: b, viaTo: far });
+        heap.push({ key: key2, player: b, g: cost, h: 0, unc: 0, nhome: 0, pri: hOf(boxes2), region: info.size });
+      }
+    }
+  }
+  return { found: null, explored };
+}
+
+/** Replay an ordered push list from a start state into a per-step grid path. */
+function expandPath(p: Parsed, startBoxes: Set<number>, startPlayer: number, pushes: Push[]): string[] {
+  const lineStep = (from: number, to: number): number => {
+    const fr = Math.floor(from / p.w);
+    const tr = Math.floor(to / p.w);
+    return fr === tr ? Math.sign((to % p.w) - (from % p.w)) : Math.sign(tr - fr) * p.w;
+  };
+  const path = [render(p, startBoxes, startPlayer)];
+  const boxes = new Set(startBoxes);
+  let player = startPlayer;
+  for (const { box, to } of pushes) {
+    const d = lineStep(box, to);
+    const { prev } = walkBFS(p, boxes, player);
+    const walk = walkSteps(prev, box - d);
+    for (let j = 1; j < walk.length; j++) path.push(render(p, boxes, walk[j]));
+    for (let bpos = box; bpos !== to; ) {
+      boxes.delete(bpos);
+      bpos += d;
+      boxes.add(bpos);
+      path.push(render(p, boxes, bpos - d));
+    }
+    player = to - d;
+  }
+  return path;
+}
+
+/**
+ * Decomposition solver: cover goals one at a time, locking each placed box. Goals
+ * that can't be covered yet are deferred; if a full pass makes no progress we are
+ * stuck. Satisficing — returns a valid (non-minimal) solution or reports it can't.
+ */
+function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): SolveResult {
+  let boxes = new Set(p.boxes);
+  let player = p.player;
+  const locked = new Set<number>();
+  const allPushes: Push[] = [];
+  // Goals already covered at the start are locked immediately.
+  for (const g of p.boxGoals) if (p.boxes.has(g)) locked.add(g);
+  let queue = [...p.boxGoals].filter((g) => !locked.has(g));
+  let totalExplored = 0;
+  // Per sub-search cap: small, so a failed cover aborts fast instead of grinding
+  // to the global cap. The whole run is bounded by `overallBudget`.
+  const perGoalCap = Math.max(20_000, Math.floor(overallBudget / 100));
+  const stuck = (n: number): SolveResult => ({
+    ok: true,
+    solvable: false,
+    ruleset: rs.name,
+    moves: null,
+    pushes: null,
+    explored: totalExplored,
+    pushed: 0,
+    pruned: 0,
+    path: null,
+    winning: null,
+    reason: `decomposition stuck: ${n} goal(s) unreachable given the placed boxes (explored ${totalExplored})`,
+  });
+
+  while (queue.length > 0) {
+    let progress = false;
+    const deferred: number[] = [];
+    for (const target of queue) {
+      const goalDist = goalDistancesBlocked(p, locked);
+      const { found, explored } = coverGoal(p, boxes, player, locked, target, goalDist, perGoalCap);
+      totalExplored += explored;
+      if (totalExplored > overallBudget) return stuck(deferred.length + (queue.length - queue.indexOf(target)));
+      if (!found) {
+        deferred.push(target);
+        continue;
+      }
+      boxes = found.boxes;
+      player = found.player;
+      allPushes.push(...found.pushes);
+      locked.add(target);
+      progress = true;
+    }
+    if (!progress) return stuck(deferred.length);
+    queue = deferred;
+  }
+
+  // All box goals covered. Recompute the end state, then walk to the player goal if any.
+  const path = expandPath(p, p.boxes, p.player, allPushes);
+  const finalBoxes = new Set(p.boxes);
+  let endPlayer = p.player;
+  for (const { box, to } of allPushes) {
+    const d = Math.floor(box / p.w) === Math.floor(to / p.w) ? Math.sign((to % p.w) - (box % p.w)) : Math.sign(to - box) * p.w;
+    finalBoxes.delete(box);
+    finalBoxes.add(to);
+    endPlayer = to - d;
+  }
+  if (p.playerGoal !== null && endPlayer !== p.playerGoal) {
+    const { prev } = walkBFS(p, finalBoxes, endPlayer);
+    if (prev.has(p.playerGoal)) {
+      const walk = walkSteps(prev, p.playerGoal);
+      for (let j = 1; j < walk.length; j++) path.push(render(p, finalBoxes, walk[j]));
+    }
+  }
+  const winning = path[path.length - 1];
+  const cappedPath = path.length <= MAX_PATH ? path : [...path.slice(0, MAX_PATH - 1), winning];
+  return {
+    ok: true,
+    solvable: true,
+    ruleset: rs.name,
+    moves: path.length - 1,
+    pushes: allPushes.length,
+    explored: totalExplored,
+    pushed: 0,
+    pruned: 0,
+    path: cappedPath,
+    winning,
+    reason: "goal reached (decomposition — solution found, not necessarily minimal)",
+  };
+}
+
 export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): SolveResult {
   const rs = getRuleSet(rulesetName);
   const fail = (reason: string, ok = true, explored = 0, pushed = 0, pruned = 0): SolveResult => ({
@@ -495,6 +768,12 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
 
   const h0 = hOf(p.boxes);
   if (h0 === Infinity) return fail("a box starts where it can never reach any goal — unsolvable", true, 0, 0, 0);
+
+  // Decomposition satisficing mode (LIPS_SEARCH=decompose): fill goals one at a
+  // time, locking placed boxes. Only meaningful in box-goal mode (goalDist set).
+  if ((process.env.LIPS_SEARCH ?? "").toLowerCase() === "decompose" && goalDist !== null) {
+    return solveByDecomposition(p, rs, MAX_EXPLORED);
+  }
 
   // Room-guided satisficing mode (LIPS_SEARCH=rooms): a greedy best-first search
   // that drives boxes out of goal-less rooms toward goal rooms. It finds *a*
@@ -573,49 +852,66 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       if (useRooms && winFrom) break; // greedy: take the first solution found
     }
 
-    // Expand pushes: for each box, each direction, if the player can reach the
-    // pushing side and the far tile is empty (floor or box goal), push it.
+    // Generate one child: box `b` ends at `rest` (player follows to rest-d), at
+    // the given real-step `cost`. Applies deadlock pruning and dedup.
+    const emitPush = (b: number, rest: number, d: number, cost: number): void => {
+      if (goalDist !== null && goalDist[rest] === Infinity) {
+        pruned++;
+        return;
+      } // simple deadlock: box lands where it can never reach a goal
+      const boxes2 = new Set(boxes);
+      boxes2.delete(b);
+      boxes2.add(rest);
+      if (goalDist !== null && freezeDeadlock(p, boxes2, goalDist, rest)) {
+        pruned++;
+        return;
+      } // freeze deadlock: this push pins a box off-goal forever
+      const player2 = rest - d; // player ends right behind the box
+      const cost0 = cost;
+      const info = regionInfo(p, boxes2, player2);
+      const key2 = `${boxesKey(boxes2)}|${info.canonical}`;
+      const prev2 = reached.get(key2);
+      if (prev2 !== undefined && prev2.g <= cost0) {
+        pruned++;
+        return;
+      }
+      // O(1) heuristic update: only box `b` moved, from b to rest.
+      const h2 = goalDist === null ? 0 : cur.h - goalDist[b] + goalDist[rest];
+      const unc2 = cur.unc + (p.boxGoals.has(b) ? 1 : 0) - (p.boxGoals.has(rest) ? 1 : 0);
+      const nhome2 = cur.nhome - notHome(b) + notHome(rest);
+      reached.set(key2, { g: cost0, parent: cur.key, viaBox: b, viaTo: rest });
+      heap.push({ key: key2, player: player2, g: cost0, h: h2, unc: unc2, nhome: nhome2, pri: priOf(cost0, h2, unc2, nhome2), region: info.size });
+      pushed++;
+    };
+
+    // Expand pushes. A push slides the box along the chosen direction; while it
+    // travels a 1-wide corridor it is forced straight and the player follows
+    // directly behind, so the whole run collapses into one move (a tunnel
+    // macro). We only stop — emitting a child — where the box can usefully rest:
+    // on a goal, where the corridor opens into a room, or against a blocker.
     for (const b of boxes) {
       const br = Math.floor(b / p.w);
       const bc = b % p.w;
       for (const [dr, dc] of DIRS) {
-        const fr = br + dr;
-        const fc = bc + dc;
-        const pr = br - dr;
-        const pc = bc - dc;
-        if (fr < 0 || fr >= p.h || fc < 0 || fc >= p.w) continue;
-        if (pr < 0 || pr >= p.h || pc < 0 || pc >= p.w) continue;
-        const far = fr * p.w + fc;
-        const pushFrom = pr * p.w + pc;
-        if (p.walls.has(far) || boxes.has(far)) continue; // far must be empty (floor or box goal)
-        if (goalDist !== null && goalDist[far] === Infinity) {
-          pruned++;
-          continue;
-        } // simple deadlock: box would land where it can never reach a goal
+        if (br + dr < 0 || br + dr >= p.h || bc + dc < 0 || bc + dc >= p.w) continue; // nothing ahead
+        if (br - dr < 0 || br - dr >= p.h || bc - dc < 0 || bc - dc >= p.w) continue; // nowhere behind to push from
+        const pushFrom = (br - dr) * p.w + (bc - dc);
         if (!dist.has(pushFrom)) continue; // player cannot reach the pushing side
-        const boxes2 = new Set(boxes);
-        boxes2.delete(b);
-        boxes2.add(far);
-        if (goalDist !== null && freezeDeadlock(p, boxes2, goalDist, far)) {
-          pruned++;
-          continue;
-        } // freeze deadlock: this push pins a box off-goal forever
-        const player2 = b; // player ends where the box was
-        const cost = cur.g + (dist.get(pushFrom) ?? 0) + 1;
-        const info = regionInfo(p, boxes2, player2);
-        const key2 = `${boxesKey(boxes2)}|${info.canonical}`;
-        const prev2 = reached.get(key2);
-        if (prev2 !== undefined && prev2.g <= cost) {
-          pruned++;
-          continue;
+        const d = dr * p.w + dc;
+        let cell = b + d;
+        if (p.walls.has(cell) || boxes.has(cell)) continue; // blocked immediately
+        const base = cur.g + (dist.get(pushFrom) ?? 0); // steps to reach the pushing side
+        // Slide forward, emitting at each useful stop until the box can't (or shouldn't) continue.
+        for (let k = 1; ; k++) {
+          const r = Math.floor(cell / p.w);
+          const c = cell % p.w;
+          const ahead = cell + d;
+          const aheadInB = dr === 0 ? c + dc >= 0 && c + dc < p.w : r + dr >= 0 && r + dr < p.h;
+          const canContinue = aheadInB && !p.walls.has(ahead) && !boxes.has(ahead) && corridorAlong(p, cell, dr, dc);
+          if (p.boxGoals.has(cell) || !canContinue) emitPush(b, cell, d, base + k); // a useful stopping cell
+          if (!canContinue) break;
+          cell = ahead;
         }
-        // O(1) component updates: only box `b` moved, from b to far.
-        const h2 = goalDist === null ? 0 : cur.h - goalDist[b] + goalDist[far];
-        const unc2 = cur.unc + (p.boxGoals.has(b) ? 1 : 0) - (p.boxGoals.has(far) ? 1 : 0);
-        const nhome2 = cur.nhome - notHome(b) + notHome(far);
-        reached.set(key2, { g: cost, parent: cur.key, viaBox: b, viaTo: far });
-        heap.push({ key: key2, player: player2, g: cost, h: h2, unc: unc2, nhome: nhome2, pri: priOf(cost, h2, unc2, nhome2), region: info.size });
-        pushed++;
       }
     }
   }
@@ -630,26 +926,40 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   for (let k: string | null = winFrom.key; k !== null; k = reached.get(k)!.parent) keyChain.push(k);
   keyChain.reverse();
 
+  // A push moves box viaBox -> viaTo in a straight line (one cell, or several at
+  // once for a tunnel macro); this is its unit step delta.
+  const lineStep = (from: number, to: number): number => {
+    const fr = Math.floor(from / p.w);
+    const tr = Math.floor(to / p.w);
+    return fr === tr ? Math.sign((to % p.w) - (from % p.w)) : Math.sign(tr - fr) * p.w;
+  };
+
   const states: { boxes: Set<number>; player: number }[] = [{ boxes: new Set(p.boxes), player: p.player }];
   for (let i = 1; i < keyChain.length; i++) {
     const e = reached.get(keyChain[i])!;
     const boxes = new Set(states[i - 1].boxes);
     boxes.delete(e.viaBox);
     boxes.add(e.viaTo);
-    states.push({ boxes, player: e.viaBox }); // player ends where the pushed box was
+    states.push({ boxes, player: e.viaTo - lineStep(e.viaBox, e.viaTo) }); // player ends right behind the box
   }
 
-  // Expand each push into single player steps: walk to the pushing side, then push.
+  // Expand each push into single player steps: walk to the pushing side, then push the box cell by cell.
   const path: string[] = [render(p, states[0].boxes, states[0].player)];
   for (let i = 1; i < keyChain.length; i++) {
     const before = states[i - 1];
-    const after = states[i];
     const e = reached.get(keyChain[i])!;
-    const pushFrom = 2 * e.viaBox - e.viaTo; // cell the player stood on to push (box - dir)
+    const d = lineStep(e.viaBox, e.viaTo);
+    const pushFrom = e.viaBox - d; // cell the player stands on to start pushing
     const { prev } = walkBFS(p, before.boxes, before.player);
     const walk = walkSteps(prev, pushFrom);
     for (let j = 1; j < walk.length; j++) path.push(render(p, before.boxes, walk[j]));
-    path.push(render(p, after.boxes, after.player));
+    const live = new Set(before.boxes);
+    for (let box = e.viaBox; box !== e.viaTo; ) {
+      live.delete(box);
+      box += d;
+      live.add(box);
+      path.push(render(p, live, box - d)); // one push step, player following behind
+    }
   }
   // Final walk to the player goal (if any), ending on it.
   if (winFrom.walkToGoal.length > 1) {
