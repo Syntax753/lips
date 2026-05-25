@@ -7,6 +7,7 @@ import {
   DELEGATOR_SERVER,
   ALGEBRAIC_TOOL,
   STATEMACHINE_TOOL,
+  SOLVE_TOOL,
 } from "./delegator/index.js";
 import { arithmeticServer, OPS_SERVER, ARITHMETIC_TOOLS } from "./ops/arithmetic.js";
 import { convertersServer, CONVERTERS_SERVER, CONVERTER_TOOLS } from "./converters/index.js";
@@ -16,14 +17,6 @@ import {
   COMPARABLE_TOOL,
   GRIDVALID_TOOL,
 } from "./evaluators/index.js";
-import {
-  stackServer,
-  STACK_SERVER,
-  STACK_TOOLS,
-  STACK_PUSH_TOOL,
-  STACK_POP_TOOL,
-  STACK_RESET_TOOL,
-} from "./stack/index.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
 export const MCP_SERVER_NAME = "comparators";
@@ -56,7 +49,6 @@ export function mcpServers(): Record<string, McpServerConfig> {
     [OPS_SERVER]: arithmeticServer(),
     [CONVERTERS_SERVER]: convertersServer(),
     [EVALUATORS_SERVER]: evaluatorsServer(),
-    [STACK_SERVER]: stackServer(),
   };
 }
 
@@ -163,30 +155,22 @@ export function specialistAgents(): Record<string, AgentDefinition> {
     maxTurns: 3,
   };
 
-  // A sub-coordinator: it orchestrates the state-space SEARCH entirely through
-  // tools (statemachine + stack), reliably, inside its own context — then hands
-  // a boolean (solvable) back up to the main coordinator.
+  // A sub-coordinator specialised in grid states. It uses the deterministic
+  // `solve` resolver (a single reliable tool call) and hands a boolean — and the
+  // move count — back up to the main coordinator.
   agents[STATE_SOLVER] = {
     description:
-      "Sub-coordinator that SOLVES a grid puzzle by searching the state space (does @ reach the goal 'x'?). Returns whether it is solvable, plus the winning grid.",
+      "Sub-coordinator that SOLVES a grid puzzle: can @ reach the goal 'x', and in how many moves? Returns solvable plus the minimum move count and winning grid.",
     prompt: [
-      "You solve a grid puzzle by SEARCHING the state space with your tools. The ruleset (default",
-      "sokoban) defines the goal glyph 'x'; success is the player '@' reaching it. Do the bookkeeping",
-      "with the tools — never simulate moves yourself. Algorithm:",
-      `  1. Call \`${STACK_RESET_TOOL}\` to clear the frontier, then expand the START grid with`,
-      `     \`${STATEMACHINE_TOOL}\`.`,
-      "  2. If any returned next state has success=true, STOP — reply 'solvable: true' and that grid.",
-      `  3. Otherwise \`${STACK_PUSH_TOOL}\` the next states, ordered FARTHEST-first by their score (closest`,
-      "     ends up on top).",
-      `  4. \`${STACK_POP_TOOL}\` the top grid. If it reports empty, STOP — reply 'solvable: false'.`,
-      `  5. Expand the popped grid with \`${STATEMACHINE_TOOL}\` and return to step 2.`,
-      "The frontier's visited Set stops repeats, so the search terminates. Report the boolean and,",
-      "if solved, the winning grid.",
-    ].join("\n"),
-    tools: [STATEMACHINE_TOOL, ...STACK_TOOLS],
+      "You solve grid puzzles. The ruleset (default sokoban) defines the goal glyph 'x'.",
+      `Call \`${SOLVE_TOOL}\` once with { grid, ruleset } — it runs a deterministic breadth-first search`,
+      "and returns { solvable, moves, path, winning }. Do not search by hand.",
+      `Optionally validate the grid first with \`${GRIDVALID_TOOL}\`.`,
+      "Report: solvable (true/false), and if solvable the MINIMUM number of moves and the winning grid.",
+    ].join(" "),
+    tools: [SOLVE_TOOL, GRIDVALID_TOOL],
     model,
-    // The search loop needs many tool turns.
-    maxTurns: 40,
+    maxTurns: 3,
   };
 
   return agents;
@@ -243,10 +227,10 @@ export function coordinatorSystemPrompt(): string {
     `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states; relay the full list).`,
     "            A bare grid with NO instruction defaults here — list the next states.",
     "",
-    `  SOLVE / SEARCH — "can this grid be solved?", "can @ reach the goal x?", reach the goal:`,
-    `         -> "${STATE_SOLVER}"  (a sub-coordinator that searches the state space via tools and`,
-    "            returns whether it is solvable, plus the winning grid). Use its boolean result and",
-    "            compose it (AND / OR) with any other parts of the request.",
+    `  SOLVE / SEARCH — "can this grid be solved?", "can @ reach x?", "how many moves to solve it?":`,
+    `         -> "${STATE_SOLVER}"  (a sub-coordinator that runs the deterministic solver and returns`,
+    "            solvable + the MINIMUM move count + the winning grid). Report the move count when asked,",
+    "            and compose its boolean (AND / OR) with any other parts of the request.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",
