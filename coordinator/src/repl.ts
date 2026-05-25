@@ -67,12 +67,9 @@ async function runDirect(expr: string): Promise<void> {
 }
 
 async function runCoordinator(expr: string): Promise<void> {
-  const result = await coordinate(expr);
-
-  // The whole run as a call tree: the coordinator (and every tool) shows its
-  // name and inputs, nested calls indented beneath, and its return on a `--> `
-  // line. The coordinator's own `-->` is the final answer.
-  for (const step of result.trace) console.log(`  ${step}`);
+  // Stream each call/result the moment it happens (flushed line-by-line), so the
+  // delegation is visible as it unfolds rather than dumped at the end.
+  const result = await coordinate(expr, (line) => console.log(`  ${line}`));
   if (result.error) console.log(`  error: ${result.error}`);
 }
 

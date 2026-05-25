@@ -107,6 +107,63 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   return fail("frontier exhausted — no path to the goal");
 }
 
+export type BestMoveResult = {
+  ok: boolean;
+  solvable: boolean;
+  ruleset: string;
+  move: string | null; // the grid AFTER the best move (null if unsolvable)
+  reachedGoal: boolean; // this move lands the player on the goal
+  movesRemaining: number; // optimal moves from the INPUT grid to the goal
+  reason: string;
+};
+
+/**
+ * The single BEST next move from a grid: the first step of the shortest path to
+ * the goal. Re-apply it to the returned grid to play out the optimal sequence.
+ */
+export function bestMove(grid: string, rulesetName: string = DEFAULT_RULESET): BestMoveResult {
+  const s = solve(grid, rulesetName);
+  if (!s.ok) {
+    return { ok: false, solvable: false, ruleset: s.ruleset, move: null, reachedGoal: false, movesRemaining: 0, reason: s.reason };
+  }
+  if (!s.solvable || !s.path || s.path.length < 2) {
+    return {
+      ok: true,
+      solvable: false,
+      ruleset: s.ruleset,
+      move: null,
+      reachedGoal: false,
+      movesRemaining: 0,
+      reason: s.solvable ? "already at the goal — no move needed" : s.reason,
+    };
+  }
+  return {
+    ok: true,
+    solvable: true,
+    ruleset: s.ruleset,
+    move: s.path[1],
+    reachedGoal: s.path.length === 2, // a single move reaches the goal
+    movesRemaining: s.moves ?? 0,
+    reason: "optimal next move",
+  };
+}
+
+export const bestmoveTool = tool(
+  "bestmove",
+  "Return the single BEST next move toward the goal for a grid (the first step of the shortest solution): the resulting grid, whether that move reaches the goal, and how many optimal moves remain. Re-apply it to the returned grid to play out the optimal sequence.",
+  {
+    grid: z.string().describe("the current state as an ASCII grid"),
+    ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
+  },
+  async (args) => {
+    const r = bestMove(args.grid, args.ruleset ?? DEFAULT_RULESET);
+    const text = !r.solvable
+      ? `no best move — ${r.reason}`
+      : `${r.reachedGoal ? "winning move" : "best move"} (${r.movesRemaining} move(s) to goal):\n${r.move}`;
+    return { content: [{ type: "text", text }], structuredContent: r };
+  },
+);
+
 export const solveTool = tool(
   "solve",
   "Deterministically decide whether the player '@' can reach the goal 'x' in a grid (ruleset default 'sokoban'), and in how many moves. Breadth-first search in code, so `moves` is the MINIMUM. Pruned by a visited set (a state already on the frontier/seen is never reprocessed). Returns { solvable, moves, path (start..win), winning, explored, pushed, pruned }.",

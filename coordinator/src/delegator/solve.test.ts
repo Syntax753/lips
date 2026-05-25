@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { solve } from "./solve.js";
+import { solve, bestMove } from "./solve.js";
 
 test("solve: finds the goal and reports the MINIMUM move count", () => {
   // @ at (0,0), x at (0,2): two moves right.
@@ -16,6 +16,20 @@ test("solve: shortest path even when a longer one exists", () => {
   const r = solve("@..\n...\n..x");
   assert.equal(r.solvable, true);
   assert.equal(r.moves, 4);
+});
+
+test("bestMove: optimal next step, and re-applying plays it out", () => {
+  const r = bestMove("@.x\n...\n...");
+  assert.equal(r.solvable, true);
+  assert.equal(r.move, ".@x\n...\n..."); // step right toward x
+  assert.equal(r.movesRemaining, 2);
+  assert.equal(r.reachedGoal, false);
+
+  // Re-apply on the returned grid: now one move reaches the goal.
+  const r2 = bestMove(r.move!);
+  assert.equal(r2.reachedGoal, true);
+  assert.equal(r2.movesRemaining, 1);
+  assert.equal(r2.move, "..@\n...\n...");
 });
 
 test("solve: no goal -> not solvable, and pruning skips revisited states", () => {

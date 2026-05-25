@@ -7,7 +7,7 @@ import {
   DELEGATOR_SERVER,
   ALGEBRAIC_TOOL,
   STATEMACHINE_TOOL,
-  SOLVE_TOOL,
+  BESTMOVE_TOOL,
 } from "./delegator/index.js";
 import { arithmeticServer, OPS_SERVER, ARITHMETIC_TOOLS } from "./ops/arithmetic.js";
 import { convertersServer, CONVERTERS_SERVER, CONVERTER_TOOLS } from "./converters/index.js";
@@ -160,17 +160,21 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   // move count — back up to the main coordinator.
   agents[STATE_SOLVER] = {
     description:
-      "Sub-coordinator that SOLVES a grid puzzle: can @ reach the goal 'x', and in how many moves? Returns solvable plus the minimum move count and winning grid.",
+      "Sub-coordinator that SOLVES a grid puzzle by playing the optimal moves one at a time (can @ reach the goal 'x', in how many moves, and the move-by-move play). Deterministic via bestmove.",
     prompt: [
-      "You solve grid puzzles. The ruleset (default sokoban) defines the goal glyph 'x'.",
-      `Call \`${SOLVE_TOOL}\` once with { grid, ruleset } — it runs a deterministic breadth-first search`,
-      "and returns { solvable, moves, path, winning }. Do not search by hand.",
-      `Optionally validate the grid first with \`${GRIDVALID_TOOL}\`.`,
-      "Report: solvable (true/false), and if solvable the MINIMUM number of moves and the winning grid.",
+      "You solve grid puzzles by PLAYING the optimal sequence ONE MOVE AT A TIME with bestmove. The",
+      "ruleset (default sokoban) has goal 'x'. The tool is deterministic — never search or move yourself.",
+      `LOOP: call \`${BESTMOVE_TOOL}\` on the current grid — it returns the best next grid, reachedGoal, and`,
+      "movesRemaining. If reachedGoal is true, STOP. Otherwise call it AGAIN on the grid it just returned,",
+      "and repeat. This is a clear LINEAR chain of best moves, each based on the previous one.",
+      "Report the ordered grids (the optimal play) and the total number of moves.",
+      `For "how many moves", the first \`${BESTMOVE_TOOL}\`'s movesRemaining is the count (still play it out).`,
+      `If bestmove reports solvable=false the grid is unsolvable. Optionally validate first with \`${GRIDVALID_TOOL}\`.`,
     ].join(" "),
-    tools: [SOLVE_TOOL, GRIDVALID_TOOL],
+    tools: [BESTMOVE_TOOL, GRIDVALID_TOOL],
     model,
-    maxTurns: 3,
+    // One turn per move in the play-out loop.
+    maxTurns: 30,
   };
 
   return agents;
@@ -227,10 +231,11 @@ export function coordinatorSystemPrompt(): string {
     `         -> "${STATE_SPECIALIST}"  (returns ALL possible next states; relay the full list).`,
     "            A bare grid with NO instruction defaults here — list the next states.",
     "",
-    `  SOLVE / SEARCH — "can this grid be solved?", "can @ reach x?", "how many moves to solve it?":`,
-    `         -> "${STATE_SOLVER}"  (a sub-coordinator that runs the deterministic solver and returns`,
-    "            solvable + the MINIMUM move count + the winning grid). Report the move count when asked,",
-    "            and compose its boolean (AND / OR) with any other parts of the request.",
+    `  SOLVE / SEARCH / PLAY — "can this grid be solved?", "how many moves?", "best move?", "best play?":`,
+    `         -> "${STATE_SOLVER}"  (a sub-coordinator over the deterministic solver: returns solvable +`,
+    "            the MINIMUM move count, the single best move, or the full optimal play). Report what was",
+    "            asked (move count / best move / the play sequence) and compose its boolean (AND / OR)",
+    "            with any other parts of the request.",
     "",
     "DECOMPOSE & COMPOSE: split a compound request into sub-problems; run INDEPENDENT ones in parallel",
     "(emit several Tasks at once) and SEQUENCE dependent ones (feed each result into the next Task).",

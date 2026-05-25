@@ -3,10 +3,20 @@ import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk";
 import { coordinatorSystemPrompt, mcpServers, specialistAgents } from "./agents.js";
 import { model } from "./config.js";
 
+export interface CoordinatorResult {
+  /** The coordinator's final answer text. */
+  raw: string;
+  /** Parsed boolean when the answer is a bare truth, else null. */
+  value: boolean | null;
+  /** The delegation as an indented call tree (also streamed live via onTrace). */
+  trace: string[];
+  /** Set when the run failed before producing a result. */
+  error?: string;
+}
+
 /**
- * Permission gate that enforces "the coordinator only calls Task". Task is
- * always allowed; any other tool is allowed only when it runs inside a
- * subagent (options.agentID is set). A direct tool call by the coordinator is
+ * Gate: the coordinator may only call Task; any other tool is allowed only from
+ * inside a subagent (options.agentID set). A direct call by the coordinator is
  * denied, forcing it to delegate.
  */
 const canUseTool: CanUseTool = async (tool, input, options) => {
@@ -18,17 +28,6 @@ const canUseTool: CanUseTool = async (tool, input, options) => {
     message: "The coordinator must not call tools directly — spawn the matching specialist via the Task tool.",
   };
 };
-
-export interface CoordinatorResult {
-  /** The coordinator's final answer text. */
-  raw: string;
-  /** Parsed boolean when the answer is a bare truth, else null. */
-  value: boolean | null;
-  /** The delegation rendered as an indented call tree. */
-  trace: string[];
-  /** Set when the run failed before producing a result. */
-  error?: string;
-}
 
 interface ToolUseBlock {
   type: "tool_use";
@@ -51,18 +50,41 @@ function extractBoolean(text: string): boolean | null {
   return matches[matches.length - 1] === "true";
 }
 
-// --- call tree ---------------------------------------------------------------
+// --- formatting (shared by the live trace) -----------------------------------
 
-interface CallNode {
-  id: string;
-  caller: string; // "coordinator" or the subagent type that made the call
-  tool: string;
-  input: unknown;
-  result: string | null;
-  children: CallNode[];
+function isSubagentCall(tool: string): boolean {
+  return tool === "Agent" || tool === "Task";
 }
 
-/** Flattened text of a tool_result block (what a call returned). */
+function inputEntries(block: ToolUseBlock): [string, unknown][] {
+  if (typeof block.input !== "object" || block.input === null) return [];
+  const entries = Object.entries(block.input as Record<string, unknown>);
+  return isSubagentCall(block.name) ? entries.filter(([k]) => k !== "subagent_type") : entries;
+}
+
+function nodeName(block: ToolUseBlock): string {
+  if (isSubagentCall(block.name)) {
+    const sub = (block.input as { subagent_type?: string } | null)?.subagent_type ?? "?";
+    return `${block.name} → ${sub}`;
+  }
+  return block.name;
+}
+
+function formatInputs(block: ToolUseBlock): string {
+  if (typeof block.input === "string") return block.input;
+  return inputEntries(block)
+    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join(", ");
+}
+
+function cleanResult(text: string): string {
+  return text
+    .replace(/<usage>.*?<\/usage>/gs, "")
+    .replace(/\s*agentId:\s*\S+\s*\(use SendMessage[^)]*\)/g, "")
+    .replace(/\s*\|\s*$/g, "")
+    .trim();
+}
+
 function toolResultText(block: unknown): string | null {
   if (typeof block !== "object" || block === null) return null;
   const b = block as { type?: unknown; content?: unknown };
@@ -82,54 +104,12 @@ function toolResultText(block: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
-/** The subagent-spawning tool is surfaced as "Agent" (or "Task"). */
-function isSubagentCall(tool: string): boolean {
-  return tool === "Agent" || tool === "Task";
-}
-
-/** Input entries to print. A subagent's type goes in the name, so drop it here. */
-function inputEntries(node: CallNode): [string, unknown][] {
-  if (typeof node.input !== "object" || node.input === null) return [];
-  const entries = Object.entries(node.input as Record<string, unknown>);
-  return isSubagentCall(node.tool) ? entries.filter(([k]) => k !== "subagent_type") : entries;
-}
-
-/** Display name, e.g. "Agent → gt-specialist" or the bare tool name. */
-function nodeName(node: CallNode): string {
-  if (isSubagentCall(node.tool)) {
-    const sub = (node.input as { subagent_type?: string } | null)?.subagent_type ?? "?";
-    return `${node.tool} → ${sub}`;
-  }
-  return node.tool;
-}
-
-/** Inputs rendered inline for the `name (inputs)` header line. */
-function formatInputs(node: CallNode): string {
-  if (typeof node.input === "string") return node.input;
-  return inputEntries(node)
-    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
-    .join(", ");
-}
-
-/** Strip subagent bookkeeping (agentId hint, <usage> block) from a result. */
-function cleanResult(text: string): string {
-  return text
-    .replace(/<usage>.*?<\/usage>/gs, "")
-    .replace(/\s*agentId:\s*\S+\s*\(use SendMessage[^)]*\)/g, "")
-    .replace(/\s*\|\s*$/g, "")
-    .trim();
-}
-
 interface EmbeddedTrace {
   ops: { name: string; input: string; output: string }[];
   summary: string;
 }
 
-/**
- * If a result carries an internal op trace (the algebra delegator runs
- * preflight/reduce/solve in code), surface each op so it renders as a nested
- * call instead of a single JSON blob.
- */
+/** If a result carries an internal op-trace (the algebra delegator), surface it. */
 function embeddedTrace(result: string | null): EmbeddedTrace | null {
   if (!result) return null;
   let obj: unknown;
@@ -152,56 +132,41 @@ function embeddedTrace(result: string | null): EmbeddedTrace | null {
   return { ops, summary };
 }
 
-function renderNode(node: CallNode, depth: number, lines: string[]): void {
-  const pad = "  ".repeat(depth);
-  const inner = "  ".repeat(depth + 1);
-  const innerResult = "  ".repeat(depth + 2);
-  lines.push(`${pad}${nodeName(node)} (${formatInputs(node)})`); // name (inputs), indented under its caller
-  for (const child of node.children) renderNode(child, depth + 1, lines); // nested calls, indented one deeper
-
-  // A delegator's internal operations render as nested calls of their own.
-  const embedded = embeddedTrace(node.result);
+/** Emit a tool result at `depth`, expanding an embedded op-trace if present. */
+function emitResult(depth: number, result: string | null, emit: (line: string) => void): void {
+  const inner = "  ".repeat(depth);
+  const embedded = embeddedTrace(result);
   if (embedded) {
     for (const op of embedded.ops) {
-      lines.push(`${inner}${op.name} (${op.input})`);
-      lines.push(`${innerResult}--> ${op.output}`);
+      emit(`${inner}${op.name} (${op.input})`);
+      emit(`${"  ".repeat(depth + 1)}--> ${op.output}`);
     }
-    lines.push(`${inner}--> ${embedded.summary}`);
+    emit(`${inner}--> ${embedded.summary}`);
     return;
   }
-
-  const cleaned = node.result ? cleanResult(node.result) : "";
-  const resultLines = (cleaned || "(no result)").split("\n");
-  lines.push(`${inner}--> ${resultLines[0]}`); // return value, last
-  for (const extra of resultLines.slice(1)) lines.push(`${inner}    ${extra}`);
-}
-
-/** Render the whole run as a tree rooted at the coordinator (itself a "tool"). */
-function renderTree(roots: CallNode[], input: string, answer: string): string[] {
-  const root: CallNode = {
-    id: "__coordinator__",
-    caller: "user",
-    tool: "coordinator",
-    input,
-    result: answer,
-    children: roots,
-  };
-  const lines: string[] = [];
-  renderNode(root, 0, lines);
-  return lines;
+  const lines = ((result ? cleanResult(result) : "") || "(no result)").split("\n");
+  emit(`${inner}--> ${lines[0]}`);
+  for (const extra of lines.slice(1)) emit(`${inner}    ${extra}`);
 }
 
 // --- run ---------------------------------------------------------------------
 
 /**
- * Run the coordinator over a request. Returns the final answer plus the
- * delegation as a call tree: every tool nested under its caller (a Task's
- * specialist calls nest under it), each input on its own line, and the return
- * value on a final `--> ` line.
+ * Run the coordinator over a request. Tool calls and results are emitted to
+ * `onTrace` THE MOMENT they happen (so a caller can flush them live), indented
+ * by call depth — coordinator → Agent → tool. The same lines are also collected
+ * into the returned `trace`.
  */
-export async function coordinate(expression: string): Promise<CoordinatorResult> {
-  const nodes = new Map<string, CallNode>();
-  const roots: CallNode[] = [];
+export async function coordinate(
+  expression: string,
+  onTrace?: (line: string) => void,
+): Promise<CoordinatorResult> {
+  const trace: string[] = [];
+  const emit = (line: string) => {
+    trace.push(line);
+    onTrace?.(line);
+  };
+  const depthOf = new Map<string, number>();
   let raw = "";
   let error: string | undefined;
 
@@ -210,37 +175,24 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     systemPrompt: coordinatorSystemPrompt(),
     mcpServers: mcpServers(),
     agents: specialistAgents(),
-    // The coordinator may only spawn specialists; canUseTool denies any direct
-    // tool call (specialists, with agentID set, run their tools normally).
-    // NOTE: disallowedTools is NOT used here — it applies globally and would
-    // also strip the tools from the specialists, breaking them.
     canUseTool,
     permissionMode: "default",
-    maxTurns: 20,
+    maxTurns: 30,
   };
+
+  emit(`coordinator (${expression})`);
 
   try {
     for await (const message of query({ prompt: expression, options })) {
       if (message.type === "assistant") {
         const blocks = message.message.content;
         if (!Array.isArray(blocks)) continue;
-        const caller = message.subagent_type ?? "coordinator";
         const parentId = message.parent_tool_use_id;
+        const depth = parentId ? (depthOf.get(parentId) ?? 0) + 1 : 1;
         for (const block of blocks) {
           if (!isToolUseBlock(block)) continue;
-          const node: CallNode = {
-            id: block.id,
-            caller,
-            tool: block.name,
-            input: block.input,
-            result: null,
-            children: [],
-          };
-          nodes.set(node.id, node);
-          // Nest under the call that spawned this turn (a Task), else it's a root.
-          const parent = parentId ? nodes.get(parentId) : undefined;
-          if (parent) parent.children.push(node);
-          else roots.push(node);
+          depthOf.set(block.id, depth);
+          emit(`${"  ".repeat(depth)}${nodeName(block)} (${formatInputs(block)})`);
         }
       } else if (message.type === "user") {
         const blocks = (message as { message?: { content?: unknown } }).message?.content;
@@ -249,8 +201,8 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
             if (typeof block !== "object" || block === null) continue;
             const b = block as { type?: unknown; tool_use_id?: unknown };
             if (b.type === "tool_result" && typeof b.tool_use_id === "string") {
-              const node = nodes.get(b.tool_use_id);
-              if (node) node.result = toolResultText(block);
+              const depth = (depthOf.get(b.tool_use_id) ?? 0) + 1;
+              emitResult(depth, toolResultText(block), emit);
             }
           }
         }
@@ -268,5 +220,10 @@ export async function coordinate(expression: string): Promise<CoordinatorResult>
     error = err instanceof Error ? err.message : String(err);
   }
 
-  return { raw, value: extractBoolean(raw), trace: renderTree(roots, expression, raw), error };
+  // The coordinator's own final answer (the root call's return).
+  const answer = (raw.trim() || "(no answer)").split("\n");
+  emit(`  --> ${answer[0]}`);
+  for (const extra of answer.slice(1)) emit(`      ${extra}`);
+
+  return { raw, value: extractBoolean(raw), trace, error };
 }

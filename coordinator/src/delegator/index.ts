@@ -1,7 +1,7 @@
 import { createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { algebraicTool } from "./algebraic.js";
 import { statemachineTool } from "./statemachine.js";
-import { solveTool } from "./solve.js";
+import { solveTool, bestmoveTool } from "./solve.js";
 
 /**
  * The delegator owns deterministic domain solvers. Today: `algebraic` (linear
@@ -15,11 +15,12 @@ export const DELEGATOR_SERVER = "delegator";
 export const ALGEBRAIC_TOOL = `mcp__${DELEGATOR_SERVER}__algebraic`;
 export const STATEMACHINE_TOOL = `mcp__${DELEGATOR_SERVER}__statemachine`;
 export const SOLVE_TOOL = `mcp__${DELEGATOR_SERVER}__solve`;
+export const BESTMOVE_TOOL = `mcp__${DELEGATOR_SERVER}__bestmove`;
 
 export function delegatorServer() {
   return createSdkMcpServer({
     name: DELEGATOR_SERVER,
     version: "0.1.0",
-    tools: [algebraicTool, statemachineTool, solveTool],
+    tools: [algebraicTool, statemachineTool, solveTool, bestmoveTool],
   });
 }
