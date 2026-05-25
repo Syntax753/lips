@@ -16,6 +16,7 @@ import {
   EVALUATORS_SERVER,
   COMPARABLE_TOOL,
   GRIDVALID_TOOL,
+  GOALMET_TOOL,
 } from "./evaluators/index.js";
 
 /** Name the Go MCP server is registered under; tools are mcp__<this>__<tool>. */
@@ -131,22 +132,26 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   };
 
   agents[EVALUATOR_SPECIALIST] = {
-    description: "Checks whether two values can be compared under a comparator.",
+    description:
+      "Evaluates predicates: whether two values can be compared, and whether a grid's WIN condition is met.",
     prompt: [
-      "You evaluate comparability.",
-      `Call \`${COMPARABLE_TOOL}\` with lhs, rhs, comparator. Reply with ok and, if not ok, the`,
-      "suggested converter.",
+      "You evaluate predicates.",
+      `For comparability, call \`${COMPARABLE_TOOL}\` with lhs, rhs, comparator; reply with ok and, if`,
+      "not ok, the suggested converter.",
+      `For a grid WIN check, call \`${GOALMET_TOOL}\` with the grid; it returns true when every box goal`,
+      "'~' is covered by a box AND (if present) the player is on 'x'. Reply with what it returns.",
     ].join(" "),
-    tools: [COMPARABLE_TOOL],
-    model: complexModel, // reasons about value/type compatibility
+    tools: [COMPARABLE_TOOL, GOALMET_TOOL],
+    model: complexModel, // reasons about value/type compatibility and win states
     maxTurns: 3,
   };
 
   agents[STATE_SPECIALIST] = {
     description: "Handles game states given as ASCII grids: lists all next states, validates a grid.",
     prompt: [
-      "You handle game-state grids. The player is '@', floor '.', goal 'x', walls '#' are impassable, and",
-      "boxes '+' can be pushed (only if the tile beyond the box is empty floor '.').",
+      "You handle game-state grids. The player is '@', floor '.', goal 'x', walls '#' are impassable,",
+      "boxes '+' can be pushed (only if the tile beyond the box is empty floor '.' or an empty box goal",
+      "'~', which the box then covers as '*'), and box goals '~' must be covered by boxes.",
       `To list ALL possible next states, call \`${STATEMACHINE_TOOL}\` with { grid, ruleset } (ruleset`,
       'defaults to "sokoban"); reply with the full list of resulting grids it returns.',
       `To check a grid is well-formed, call \`${GRIDVALID_TOOL}\`. Do not simulate moves yourself.`,
@@ -164,8 +169,10 @@ export function specialistAgents(): Record<string, AgentDefinition> {
       "Grid-solving specialist: runs ONE breadth-first search (popping the queue, pruning seen states) and returns the OPTIMAL path and the minimum move count (or 'unsolvable').",
     prompt: [
       "You solve grid puzzles with the deterministic resolver (ruleset default sokoban): player '@',",
-      "floor '.', goal 'x', walls '#' that are impassable (the search routes around them), and boxes '+'",
-      "that the player can push when the tile beyond the box is empty floor '.'.",
+      "floor '.', goal 'x' (player standing on it is 'X'), walls '#' that are impassable (the search",
+      "routes around them), boxes '+' the player pushes when the tile beyond the box is empty floor '.'",
+      "or an empty box goal '~' (covering it -> '*'). The WIN: every box goal '~' is covered by a box AND",
+      "(if a player goal is present) the player ends on 'x'. Report the minimum move count and path.",
       `Call \`${SOLVE_TOOL}\` ONCE with { grid, ruleset }. It runs a breadth-first search — repeatedly`,
       "popping states off the queue, expanding successors, and pruning states already seen — until it",
       "reaches the goal. It returns { solvable, moves (the MINIMUM), path (start..goal), explored,",

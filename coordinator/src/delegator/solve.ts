@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { evaluateMoves } from "../evaluators/grid.js";
+import { goalMet } from "./statemachine.js";
 import { getRuleSet, DEFAULT_RULESET } from "../rules/index.js";
 
 /**
@@ -44,7 +45,8 @@ export type SolveResult = {
 
 /** Normalise a grid to the form expand() emits, so visited keys match. */
 function normalize(grid: string): string {
-  const rows = grid.replace(/\r/g, "").split("\n");
+  // A space is an alternate spelling of empty floor.
+  const rows = grid.replace(/\r/g, "").replace(/ /g, ".").split("\n");
   while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
   return rows.join("\n");
 }
@@ -67,6 +69,48 @@ function reconstruct(parent: Map<string, string | null>, node: string): string[]
 export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): SolveResult {
   const ruleset = getRuleSet(rulesetName);
   const start = normalize(grid);
+
+  // Preflight (box-goal mode): the puzzle is to cover every box goal `~` with a
+  // box. There must be at least as many boxes as goals, or it can never be done.
+  const count = (g: string, glyph?: string): number => (glyph ? g.split(glyph).length - 1 : 0);
+  const boxGoalMode =
+    !!ruleset.boxGoal && (start.includes(ruleset.boxGoal) || (!!ruleset.boxOnGoal && start.includes(ruleset.boxOnGoal)));
+  if (boxGoalMode) {
+    const goals = count(start, ruleset.boxGoal) + count(start, ruleset.boxOnGoal); // ~ + *
+    const boxes = count(start, ruleset.box) + count(start, ruleset.boxOnGoal); // + + *
+    if (goals > boxes) {
+      return {
+        ok: true,
+        solvable: false,
+        ruleset: ruleset.name,
+        moves: null,
+        explored: 0,
+        pushed: 0,
+        pruned: 0,
+        path: null,
+        winning: null,
+        trace: [],
+        reason: `preflight failed: ${goals} box goal(s) but only ${boxes} box(es) — they cannot all be covered`,
+      };
+    }
+  }
+
+  // Already solved? The postflight validator is the win decision point.
+  if (goalMet(start, ruleset.name).met) {
+    return {
+      ok: true,
+      solvable: true,
+      ruleset: ruleset.name,
+      moves: 0,
+      explored: 0,
+      pushed: 1,
+      pruned: 0,
+      path: [start],
+      winning: start,
+      trace: [],
+      reason: "goal already met",
+    };
+  }
 
   const queue: string[] = [start]; // BFS frontier (head index avoids O(n) shifts)
   let head = 0;
@@ -215,7 +259,7 @@ export const bestmoveTool = tool(
 
 export const solveTool = tool(
   "solve",
-  "Deterministically decide whether the player '@' can reach the goal 'x' in a grid (ruleset default 'sokoban'), and in how many moves. The player moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable and must be routed around; a box '+' can be pushed when the tile beyond it is empty floor '.'. Breadth-first search in code, so `moves` is the MINIMUM. Pruned by a visited set (a state already on the frontier/seen is never reprocessed). Returns { solvable, moves, path (start..win), winning, explored, pushed, pruned }.",
+  "Deterministically solve a grid (ruleset default 'sokoban') and report the MINIMUM number of moves. The player '@' moves onto floor '.' or goal 'x' (standing on the goal is shown as 'X'); walls '#' are impassable; a box '+' can be pushed when the tile beyond it is empty floor '.' or an empty box goal '~' (covering it -> '*'). WIN condition: every box goal '~' must be covered by a box AND (when a player goal is present) the player must end standing on 'x'. Preflight: a grid with more box goals than boxes is unsolvable. Breadth-first search, so `moves` is the MINIMUM. Pruned by a visited set. Returns { solvable, moves, path (start..win), winning, explored, pushed, pruned }.",
   {
     grid: z.string().describe("the start state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

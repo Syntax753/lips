@@ -28,7 +28,8 @@ export type ExpandResult = {
 };
 
 function parseGrid(grid: string): string[] {
-  const rows = grid.replace(/\r/g, "").split("\n");
+  // A space is an alternate spelling of empty floor.
+  const rows = grid.replace(/\r/g, "").replace(/ /g, ".").split("\n");
   while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
   if (rows.length === 0) throw new Error("empty grid");
   const width = rows[0].length;
@@ -61,6 +62,46 @@ const DIRECTIONS: ReadonlyArray<readonly [number, number]> = [
   [1, 0],
 ];
 
+export type GoalCheck = {
+  met: boolean; // the win condition is satisfied
+  boxGoalsCovered: boolean; // every box goal '~' is covered by a box
+  playerOnGoal: boolean; // the player stands on the player goal 'x' (shown 'X')
+  uncoveredBoxGoals: number; // '~' still uncovered
+  reason: string;
+};
+
+/**
+ * Postflight win validator: given a current grid, decide whether the goal has
+ * been MET. The win is: every box goal `~` is covered by a box (none left), AND
+ * — when the grid has a player goal — the player is standing on it (shown as the
+ * `playerOnGoal` glyph 'X', so no uncovered `goal` 'x' remains). A grid with no
+ * goals at all is not a win. This is the single decision point for completion.
+ */
+export function goalMet(grid: string, rulesetName: string = DEFAULT_RULESET): GoalCheck {
+  const ruleset = getRuleSet(rulesetName);
+  const has = (glyph?: string): boolean => !!glyph && grid.includes(glyph);
+  const count = (glyph?: string): number => (glyph ? grid.split(glyph).length - 1 : 0);
+
+  const hasBoxGoals = has(ruleset.boxGoal) || has(ruleset.boxOnGoal); // '~' or '*'
+  const hasPlayerGoal = has(ruleset.goal) || has(ruleset.playerOnGoal); // 'x' or 'X'
+  const uncoveredBoxGoals = count(ruleset.boxGoal); // '~' still open
+  const uncoveredPlayerGoal = count(ruleset.goal); // 'x' the player hasn't reached
+
+  const boxGoalsCovered = uncoveredBoxGoals === 0;
+  const playerOnGoal = hasPlayerGoal && uncoveredPlayerGoal === 0; // reached -> shown as 'X'
+  const boxGoalsMet = !hasBoxGoals || boxGoalsCovered;
+  const playerGoalMet = !hasPlayerGoal || uncoveredPlayerGoal === 0;
+  const met = (hasBoxGoals || hasPlayerGoal) && boxGoalsMet && playerGoalMet;
+
+  let reason: string;
+  if (!hasBoxGoals && !hasPlayerGoal) reason = "no goals in the grid";
+  else if (met) reason = "win: all goals satisfied";
+  else if (!boxGoalsMet) reason = `${uncoveredBoxGoals} box goal(s) still uncovered`;
+  else reason = "player has not reached the goal 'x'";
+
+  return { met, boxGoalsCovered, playerOnGoal, uncoveredBoxGoals, reason };
+}
+
 export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): ExpandResult {
   const ruleset = getRuleSet(rulesetName);
   let rows: string[];
@@ -75,19 +116,27 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
   const states: NextState[] = [];
   const inBounds = (rr: number, cc: number): boolean => rr >= 0 && rr < height && cc >= 0 && cc < width;
 
-  // Glyphs each subject may step directly onto (floor / goal), keyed by subject.
-  const targetsBySubject = new Map<string, Set<string>>();
-  for (const rule of ruleset.rules) {
-    let set = targetsBySubject.get(rule.subject);
-    if (!set) targetsBySubject.set(rule.subject, (set = new Set()));
-    set.add(rule.object);
-  }
+  const boxGoal = ruleset.boxGoal;
+  const boxOnGoal = ruleset.boxOnGoal;
+  const uncovered = (g: string): number => (boxGoal ? g.split(boxGoal).length - 1 : 0);
+  const boxGoalMode = !!boxGoal && (grid.includes(boxGoal) || (!!boxOnGoal && grid.includes(boxOnGoal)));
+
+  // The player. It is `@` on floor and `playerOnGoal` ('X') while standing on the
+  // player goal, so it can step onto and off the goal.
+  const playerGlyph = ruleset.rules[0]?.subject ?? "@";
+  const playerOnGoal = ruleset.playerOnGoal;
+  const isPlayer = (glyph: string): boolean => glyph === playerGlyph || (!!playerOnGoal && glyph === playerOnGoal);
+  const playerVacates = (glyph: string): string => (glyph === playerOnGoal ? ruleset.goal : ruleset.floor);
+  const playerEnters = (dest: string): string => (dest === ruleset.goal && playerOnGoal ? playerOnGoal : playerGlyph);
+  // Tiles the player may step directly onto (floor / goal, per the MOV rules).
+  const moveTargets = new Set(ruleset.rules.filter((r) => r.subject === playerGlyph).map((r) => r.object));
+  // A tile a box can be pushed into: empty floor, or an empty box goal.
+  const pushInto = (glyph: string): boolean => glyph === ruleset.floor || (!!boxGoal && glyph === boxGoal);
 
   for (let r = 0; r < height; r++) {
     for (let c = 0; c < width; c++) {
       const subject = rows[r][c];
-      const moveTargets = targetsBySubject.get(subject);
-      if (!moveTargets) continue; // this cell is not a movable subject
+      if (!isPlayer(subject)) continue; // only the player generates moves
 
       for (const [dr, dc] of DIRECTIONS) {
         const nr = r + dr;
@@ -95,35 +144,43 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
         if (!inBounds(nr, nc)) continue;
         const target = rows[nr][nc];
 
-        // Walls are impassable — the subject may never move onto one.
+        // Walls are impassable — the player may never move onto one.
         if (ruleset.wall && target === ruleset.wall) continue;
 
-        // Box: moving onto it is legal ONLY if it can be pushed. The tile one
-        // step further in the same direction must be empty floor; the box slides
-        // there and the subject takes the box's old square.
+        // Box (on floor): moving onto it is legal ONLY if it can be pushed. The
+        // tile one step further must be empty floor or an empty box goal; the box
+        // slides there (covering a goal -> `*`) and the player takes its square.
+        // A box already on a goal (`*`) is fixed — not matched here.
         if (ruleset.box && target === ruleset.box) {
           const fr = nr + dr;
           const fc = nc + dc;
           if (!inBounds(fr, fc)) continue; // nothing beyond the box to push into
-          if (rows[fr][fc] !== ruleset.floor) continue; // far side is not empty floor
+          const farTile = rows[fr][fc];
+          if (!pushInto(farTile)) continue; // far side is not empty floor / box goal
           const next = rows.map((row) => row.split(""));
-          next[r][c] = ruleset.floor; // subject leaves floor behind
-          next[nr][nc] = subject; // subject moves onto the box's old square
-          next[fr][fc] = ruleset.box; // box pushed one step further
+          next[r][c] = playerVacates(subject); // player leaves floor (or goal -> 'x')
+          next[nr][nc] = playerGlyph; // player onto the box's old (floor) square -> '@'
+          next[fr][fc] = boxGoal && farTile === boxGoal && boxOnGoal ? boxOnGoal : ruleset.box; // cover -> '*'
           const grid2 = next.map((row) => row.join("")).join("\n");
-          // A push lands the subject where the box was, never on the goal.
-          states.push({ grid: grid2, success: false, score: distance(grid2, subject, ruleset.goal) });
+          const success = goalMet(grid2, ruleset.name).met;
+          const score = boxGoalMode ? uncovered(grid2) : distance(grid2, playerGlyph, ruleset.goal);
+          states.push({ grid: grid2, success, score });
           continue;
         }
 
         // Plain move onto a floor / goal tile.
         if (moveTargets.has(target)) {
           const next = rows.map((row) => row.split(""));
-          next[r][c] = ruleset.floor; // subject leaves floor behind
-          next[nr][nc] = subject;
+          next[r][c] = playerVacates(subject); // player leaves floor (or goal -> 'x')
+          next[nr][nc] = playerEnters(target); // floor -> '@', goal -> 'X'
           const grid2 = next.map((row) => row.join("")).join("\n");
-          const success = target === ruleset.goal; // landed on the goal
-          states.push({ grid: grid2, success, score: success ? 0 : distance(grid2, subject, ruleset.goal) });
+          const success = goalMet(grid2, ruleset.name).met;
+          const score = boxGoalMode
+            ? uncovered(grid2)
+            : target === ruleset.goal
+              ? 0
+              : distance(grid2, playerGlyph, ruleset.goal);
+          states.push({ grid: grid2, success, score });
         }
       }
     }
@@ -142,7 +199,7 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
 
 export const statemachineTool = tool(
   "statemachine",
-  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable; a box '+' may be pushed only when the tile beyond it (away from the player) is empty floor '.' (the box slides there, the player takes its square). Each has `grid`, `success` (true if it lands the player on the goal 'x'), and `score` (Manhattan distance of the player to the goal; lower = closer). `success` at top level is true if any next state wins.",
+  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x' (standing on the goal is shown 'X'); walls '#' are impassable; a box '+' may be pushed only when the tile beyond it is empty floor '.' or an empty box goal '~' (the box slides there — covering a goal makes it '*' — and the player takes its square). `success` is true when the WIN is met: every box goal '~' covered AND (if present) the player on 'x'. `score` is the count of uncovered box goals (or, with no box goals, the player's Manhattan distance to 'x'); lower = closer.",
   {
     grid: z.string().describe("the current state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

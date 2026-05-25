@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { expand } from "./statemachine.js";
+import { expand, goalMet } from "./statemachine.js";
 import { parseRule } from "../rules/index.js";
 
 test("parseRule reads PuzzleScript-ish notation", () => {
@@ -70,6 +70,34 @@ test("expand will not push a box without empty floor beyond it", () => {
   assert.equal(expand("@+x").count, 0); // far tile is the goal, not floor
   assert.equal(expand("@++").count, 0); // far tile is another box
   assert.equal(expand("@+").count, 0); // box at the edge: nothing beyond to push into
+});
+
+test("expand pushes a box onto a box goal '~' and flags the win", () => {
+  // @+~ : pushing the box right covers the only goal -> '*', which wins.
+  const r = expand("@+~");
+  assert.equal(r.count, 1);
+  assert.equal(r.states[0].grid, ".@*"); // box covered the goal
+  assert.equal(r.states[0].success, true); // all box goals covered
+  assert.equal(r.states[0].score, 0); // zero uncovered goals
+});
+
+test("expand: covering only one of two box goals is not yet a win", () => {
+  // @+~+~ : push the first box onto its goal; one goal still uncovered.
+  const r = expand("@+~+~");
+  const covered = r.states.find((s) => s.grid === ".@*+~");
+  assert.ok(covered, "the first box can be pushed onto its goal");
+  assert.equal(covered!.success, false); // a '~' remains uncovered
+  assert.equal(covered!.score, 1); // one uncovered goal
+});
+
+test("goalMet: win = all box goals covered AND the player on 'x'", () => {
+  assert.equal(goalMet("..X").met, true); // player on goal, no box goals
+  assert.equal(goalMet("..@").met, false); // no goals at all is not a win
+  assert.equal(goalMet(".@*").met, true); // box on goal, no player goal
+  assert.equal(goalMet(".@~").met, false); // an uncovered box goal remains
+  assert.equal(goalMet("#X.*").met, true); // player on goal AND box on goal
+  assert.equal(goalMet("#@x*").met, false); // player has not reached 'x'
+  assert.equal(goalMet("#X.~").met, false); // player on 'x' but a '~' uncovered
 });
 
 test("expand rejects a ragged grid", () => {

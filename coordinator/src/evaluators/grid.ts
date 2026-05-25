@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { tool } from "@anthropic-ai/claude-agent-sdk";
-import { expand, type NextState } from "../delegator/statemachine.js";
+import { expand, goalMet, type NextState } from "../delegator/statemachine.js";
 
 /**
  * Evaluator that checks an ASCII grid state is well-formed for the (no-boxes)
@@ -13,6 +13,10 @@ export type GridValidResult = {
   width: number;
   height: number;
   players: number;
+  /** Box goals present (empty `~` plus covered `*`). */
+  boxGoals: number;
+  /** Boxes present (on floor `+` plus on a goal `*`). */
+  boxes: number;
 };
 
 export function gridValid(grid: string): GridValidResult {
@@ -21,6 +25,9 @@ export function gridValid(grid: string): GridValidResult {
   const height = rows.length;
   const width = height > 0 ? rows[0].length : 0;
   const players = (grid.match(/@/g) ?? []).length;
+  const count = (glyph: string): number => grid.split(glyph).length - 1;
+  const boxGoals = count("~") + count("*"); // empty + covered goals
+  const boxes = count("+") + count("*"); // boxes on floor + on goals
 
   let ok = true;
   let reason = "well-formed grid";
@@ -33,9 +40,13 @@ export function gridValid(grid: string): GridValidResult {
   } else if (players !== 1) {
     ok = false;
     reason = `expected exactly one '@', found ${players}`;
+  } else if (boxGoals > boxes) {
+    // Preflight: every box goal must be coverable by a box.
+    ok = false;
+    reason = `${boxGoals} box goal(s) but only ${boxes} box(es) to cover them`;
   }
 
-  return { ok, reason, width, height, players };
+  return { ok, reason, width, height, players, boxGoals, boxes };
 }
 
 export type MoveEval = {
@@ -80,10 +91,23 @@ export function evaluateMoves(
 
 export const gridvalidTool = tool(
   "gridvalid",
-  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Floor '.', goal 'x', wall '#' and box '+' are all valid cells. Returns ok=true/false plus the dimensions.",
+  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Floor '.', goal 'x', wall '#', box '+', box goal '~' and box-on-goal '*' are all valid cells. Preflight: there must be at least as many boxes as box goals, or it cannot be solved. Returns ok=true/false plus the dimensions, boxGoals and boxes counts.",
   { grid: z.string().describe("the state as an ASCII grid") },
   async (args) => {
     const r = gridValid(args.grid);
     return { content: [{ type: "text", text: String(r.ok) }], structuredContent: r };
+  },
+);
+
+export const goalmetTool = tool(
+  "goalmet",
+  "Postflight win check for a grid (ruleset default 'sokoban'): returns true when the WIN condition is met — every box goal '~' is covered by a box AND (if the grid has a player goal) the player is standing on 'x' (shown as 'X'). A grid with no goals returns false. This is the decision point for whether the puzzle is solved.",
+  {
+    grid: z.string().describe("the current state as an ASCII grid"),
+    ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
+  },
+  async (args) => {
+    const r = goalMet(args.grid, args.ruleset);
+    return { content: [{ type: "text", text: String(r.met) }], structuredContent: r };
   },
 );

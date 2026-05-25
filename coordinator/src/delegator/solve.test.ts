@@ -29,7 +29,7 @@ test("bestMove: optimal next step, and re-applying plays it out", () => {
   const r2 = bestMove(r.move!);
   assert.equal(r2.reachedGoal, true);
   assert.equal(r2.movesRemaining, 1);
-  assert.equal(r2.move, "..@\n...\n...");
+  assert.equal(r2.move, "..X\n...\n..."); // player standing on the goal is 'X'
 });
 
 test("solve: routes around '#' walls and reports the detour length", () => {
@@ -64,6 +64,49 @@ test("solve: a box that can't be pushed onto the goal seals it off", () => {
   const r = solve("###\n@+x\n###");
   assert.equal(r.solvable, false);
   assert.equal(r.moves, null);
+});
+
+test("solve: covers a box goal '~' to win (box-goal mode)", () => {
+  // Pushing the box one step right covers the only box goal.
+  const r = solve("@+~");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 1);
+  assert.equal(r.winning, ".@*"); // the box now sits on the goal
+});
+
+test("solve: preflight rejects more box goals than boxes", () => {
+  const r = solve("@+~~"); // 2 goals, 1 box
+  assert.equal(r.solvable, false);
+  assert.equal(r.moves, null);
+  assert.match(r.reason, /preflight/);
+});
+
+test("solve: a grid with all box goals already covered needs 0 moves", () => {
+  const r = solve("@.*"); // the single goal is already covered
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 0);
+});
+
+test("solve: walls + boxes maze reaches the goal in the minimum 18 moves", () => {
+  // Boxes must be pushed out of the way (the start is otherwise sealed). BFS
+  // finds the shortest legal play; the minimum is 18 moves.
+  const r = solve("@.#...#\n#+#...#\n..#+#+#\n..#.#..\n....#.x");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 18);
+});
+
+test("solve: covers all box goals AND the player reaches 'x' in a walled room", () => {
+  // 3 boxes, 2 box goals '~', plus the player goal 'x' (spaces are floor). The
+  // win needs BOTH every '~' covered AND the player on 'x', so the player covers
+  // the top & bottom goals, then pushes the middle box aside to clear 'x' and
+  // steps onto it. Minimum 7 moves.
+  const r = solve("#####\n#@+~#\n# +x#\n# +~#\n#####");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 7);
+  assert.equal((r.winning!.match(/~/g) ?? []).length, 0); // every box goal covered
+  assert.equal((r.winning!.match(/\*/g) ?? []).length, 2); // both shown as '*'
+  assert.equal((r.winning!.match(/X/g) ?? []).length, 1); // player stands on the goal
+  assert.equal((r.winning!.match(/x/g) ?? []).length, 0); // no uncovered player goal
 });
 
 test("solve: no goal -> not solvable, and pruning skips revisited states", () => {
