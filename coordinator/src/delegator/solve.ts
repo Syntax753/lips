@@ -10,10 +10,18 @@ import { logVerbose, getLogLevel } from "../logger.js";
  * when they have the same boxes and the player can walk between them without
  * pushing (a reversible move). Each equivalence class = (box layout, the
  * player's reachable region); the search branches only on pushes, which kills
- * the player-walking explosion. Costs are real player steps (walk-to-push + 1),
- * so it is a uniform-cost search whose `moves` is the minimum-step solution; the
- * frontier is ordered by cost, then by FEWEST equivalent states (smallest
- * reachable region) as a tie-breaker. Each popped state is logged live.
+ * the player-walking explosion. Costs are real player steps (walk-to-push + 1).
+ *
+ * It is A* ordered by f = g + W·h: g is the player-step cost so far, and h is an
+ * admissible lower bound — the sum over boxes of each box's minimum pushes to
+ * the nearest goal (see `goalDistances`). With W = 1 the heuristic only guides
+ * the search, so `moves` is still the true minimum; W > 1 trades optimality for
+ * reach. The frontier breaks ties by FEWEST equivalent states (smallest region).
+ * Dead branches are pruned by simple-deadlock (a push onto a cell no box can
+ * leave toward a goal) and freeze-deadlock (a box pinned off-goal forever); both
+ * the heuristic and pruning need every box to map to a goal, so they engage only
+ * when #boxes === #box goals (otherwise h = 0, i.e. plain uniform-cost). Each
+ * popped state is logged live.
  */
 
 export type SolveResult = {
@@ -178,20 +186,23 @@ function regionInfo(p: Parsed, boxes: Set<number>, player: number): { size: numb
 }
 
 /**
- * "Simple deadlock" squares: cells from which a box can NEVER be pushed onto any
- * box goal. Found by pulling a virtual box outward from every goal (the reverse
- * of a push) and flooding — a box can be pulled from `c` to `c+d` only if `c+d`
- * and `c+2d` (where the player must stand to pull) are both non-wall. Any
- * non-wall cell never reached this way is dead. The analysis ignores other boxes
- * and player reachability, so it is a relaxation: it only marks a square dead
- * when it is dead regardless, and so never removes a real solution.
+ * For every cell, the minimum number of PUSHES to get a box from there onto the
+ * NEAREST box goal — a multi-source "pull" BFS from all goals (the reverse of a
+ * push: a box can be pulled `c -> c+d` only if `c+d` and `c+2d`, where the
+ * player must stand to pull, are both non-wall). Cells never reached are dead
+ * (Infinity): a box there can never cover a goal. The analysis ignores other
+ * boxes and player navigation, so each distance is an admissible lower bound on
+ * the real pushes, and a cell is only marked dead when it is dead regardless.
+ *
+ * This one table drives both the A* heuristic (sum over boxes) and simple-
+ * deadlock pruning (a push onto an Infinity cell).
  */
-function deadSquares(p: Parsed): Set<number> {
-  const live = new Set<number>();
+function goalDistances(p: Parsed): number[] {
+  const dist = new Array<number>(p.w * p.h).fill(Infinity);
   const queue: number[] = [];
   for (const g of p.boxGoals)
-    if (!live.has(g)) {
-      live.add(g);
+    if (dist[g] === Infinity) {
+      dist[g] = 0;
       queue.push(g);
     }
   let head = 0;
@@ -209,17 +220,65 @@ function deadSquares(p: Parsed): Set<number> {
       const to = tr * p.w + tc;
       const pull = sr * p.w + sc;
       if (p.walls.has(to) || p.walls.has(pull)) continue;
-      if (!live.has(to)) {
-        live.add(to);
+      if (dist[to] === Infinity) {
+        dist[to] = dist[c] + 1;
         queue.push(to);
       }
     }
   }
-  const dead = new Set<number>();
-  for (let cell = 0; cell < p.w * p.h; cell++) {
-    if (!p.walls.has(cell) && !live.has(cell)) dead.add(cell);
+  return dist;
+}
+
+/**
+ * Is the box on `cell` blocked along one axis? Blocked when either neighbour on
+ * the axis is a wall (or off-grid, or a box we are pretending is a wall to break
+ * recursion), OR both neighbours are dead squares (any push that way is futile),
+ * OR a neighbouring box is itself frozen. `asWall` carries the boxes currently
+ * being treated as walls up the recursion stack.
+ */
+function axisBlocked(p: Parsed, boxes: Set<number>, goalDist: number[], cell: number, asWall: Set<number>, horizontal: boolean): boolean {
+  const r = Math.floor(cell / p.w);
+  const c = cell % p.w;
+  const a = horizontal ? (c - 1 >= 0 ? cell - 1 : -1) : r - 1 >= 0 ? cell - p.w : -1;
+  const b = horizontal ? (c + 1 < p.w ? cell + 1 : -1) : r + 1 < p.h ? cell + p.w : -1;
+  const wallLike = (x: number): boolean => x < 0 || p.walls.has(x) || asWall.has(x);
+  if (wallLike(a) || wallLike(b)) return true; // a wall on either side pins this axis
+  if (goalDist[a] === Infinity && goalDist[b] === Infinity) return true; // both sides dead
+  for (const side of [a, b]) {
+    if (boxes.has(side) && !asWall.has(side) && frozen(p, boxes, goalDist, side, asWall)) return true;
   }
-  return dead;
+  return false;
+}
+
+/** A box is frozen when it is blocked on BOTH axes — it can never move again. */
+function frozen(p: Parsed, boxes: Set<number>, goalDist: number[], cell: number, asWall: Set<number>): boolean {
+  asWall.add(cell); // treat this box as a wall while we probe its neighbours
+  const blocked = axisBlocked(p, boxes, goalDist, cell, asWall, true) && axisBlocked(p, boxes, goalDist, cell, asWall, false);
+  asWall.delete(cell);
+  return blocked;
+}
+
+/**
+ * Freeze deadlock after a push to `pushedTo`: if the pushed box — or any box now
+ * adjacent to it — is frozen while NOT on a goal, no box there can ever reach a
+ * goal, so the position is unwinnable. Sound only when every box must end on a
+ * goal (the caller gates this to #boxes === #box goals).
+ */
+function freezeDeadlock(p: Parsed, boxes: Set<number>, goalDist: number[], pushedTo: number): boolean {
+  const candidates = [pushedTo];
+  const r = Math.floor(pushedTo / p.w);
+  const c = pushedTo % p.w;
+  for (const [dr, dc] of DIRS) {
+    const nr = r + dr;
+    const nc = c + dc;
+    if (nr < 0 || nr >= p.h || nc < 0 || nc >= p.w) continue;
+    const n = nr * p.w + nc;
+    if (boxes.has(n)) candidates.push(n);
+  }
+  for (const cell of candidates) {
+    if (!p.boxGoals.has(cell) && frozen(p, boxes, goalDist, cell, new Set())) return true;
+  }
+  return false;
 }
 
 const allCovered = (p: Parsed, boxes: Set<number>): boolean => {
@@ -248,16 +307,19 @@ type Entry = {
   viaTo: number; // cell it was pushed to
 };
 
-// Minimal binary min-heap ordered by (cost, regionSize) — cost first so `moves`
-// stays the minimum; fewest-equivalent-states (smallest region) breaks ties.
-type HeapItem = { key: string; player: number; g: number; region: number };
+// Minimal binary min-heap ordered by (f, regionSize) where f = g + W·h is the
+// A* priority — lowest estimated total first; fewest-equivalent-states (smallest
+// region) breaks ties. `g` is the real player-step cost (kept for the stale
+// check and the result); `h` is the raw heuristic (kept for the O(1) child
+// update).
+type HeapItem = { key: string; player: number; g: number; h: number; f: number; region: number };
 class Heap {
   private a: HeapItem[] = [];
   get size(): number {
     return this.a.length;
   }
   private less(i: number, j: number): boolean {
-    return this.a[i].g !== this.a[j].g ? this.a[i].g < this.a[j].g : this.a[i].region < this.a[j].region;
+    return this.a[i].f !== this.a[j].f ? this.a[i].f < this.a[j].f : this.a[i].region < this.a[j].region;
   }
   push(item: HeapItem): void {
     const a = this.a;
@@ -330,15 +392,33 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   const reached = new Map<string, Entry>();
   const heap = new Heap();
 
-  // Simple-deadlock pruning is only sound when every box MUST end on a goal
-  // (#boxes === #box goals). With surplus boxes or a pure player-goal grid a box
-  // may legitimately rest on a non-goal square, so we leave it off there.
-  const dead = p.boxGoals.size > 0 && p.boxes.size === p.boxGoals.size ? deadSquares(p) : null;
+  // The A* heuristic + deadlock pruning are only sound when every box MUST end
+  // on a goal (#boxes === #box goals). With surplus boxes or a pure player-goal
+  // grid a box may legitimately rest off a goal, so we fall back to h = 0 (plain
+  // uniform-cost search) and skip deadlock pruning there.
+  const goalDist = p.boxGoals.size > 0 && p.boxes.size === p.boxGoals.size ? goalDistances(p) : null;
+  // f = g + W·h. W = 1 keeps the search admissible (minimum `moves`); W > 1
+  // (LIPS_HEURISTIC_WEIGHT) trades optimality for reach on very large grids.
+  const W = Math.max(1, Number(process.env.LIPS_HEURISTIC_WEIGHT ?? 1));
+  // Sum of each box's lower-bound pushes to a goal — admissible, updated in O(1)
+  // per push. Infinity means a box that can never reach any goal (a dead state).
+  const hOf = (boxes: Set<number>): number => {
+    if (!goalDist) return 0;
+    let h = 0;
+    for (const b of boxes) {
+      if (goalDist[b] === Infinity) return Infinity;
+      h += goalDist[b];
+    }
+    return h;
+  };
+
+  const h0 = hOf(p.boxes);
+  if (h0 === Infinity) return fail("a box starts where it can never reach any goal — unsolvable", true, 0, 0, 0);
 
   const start0 = regionInfo(p, p.boxes, p.player);
   const sKey = `${boxesKey(p.boxes)}|${start0.canonical}`;
   reached.set(sKey, { g: 0, parent: null, viaBox: -1, viaTo: -1 });
-  heap.push({ key: sKey, player: p.player, g: 0, region: start0.size });
+  heap.push({ key: sKey, player: p.player, g: 0, h: h0, f: W * h0, region: start0.size });
 
   let explored = 0;
   let pushed = 1;
@@ -355,7 +435,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       pruned++;
       continue;
     } // stale (a cheaper arrival superseded it)
-    if (cur.g >= bestWin) break; // uniform-cost: nothing left can beat the best finish
+    if (cur.f >= bestWin) break; // A*: the cheapest possible finish can't beat the best found
 
     explored++;
     if (explored > MAX_EXPLORED) {
@@ -368,7 +448,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
 
     if (logVerboseEnabled()) {
       if (logged < MAX_TRACE) {
-        logVerbose(`  [${String(explored).padStart(6)}] cost ${String(cur.g).padStart(4)} | ${region} equivalent | ${compact(render(p, boxes, cur.player))}`);
+        logVerbose(`  [${String(explored).padStart(6)}] f ${String(cur.f).padStart(4)} = g ${String(cur.g).padStart(4)} + h ${String(cur.h).padStart(4)} | ${region} equiv | ${compact(render(p, boxes, cur.player))}`);
         logged++;
         if (logged === MAX_TRACE) logVerbose(`  … (further states not logged; --log=basic to silence)`);
       }
@@ -403,14 +483,18 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
         const far = fr * p.w + fc;
         const pushFrom = pr * p.w + pc;
         if (p.walls.has(far) || boxes.has(far)) continue; // far must be empty (floor or box goal)
-        if (dead !== null && dead.has(far)) {
+        if (goalDist !== null && goalDist[far] === Infinity) {
           pruned++;
           continue;
-        } // box would land where it can never reach a goal — a dead end
+        } // simple deadlock: box would land where it can never reach a goal
         if (!dist.has(pushFrom)) continue; // player cannot reach the pushing side
         const boxes2 = new Set(boxes);
         boxes2.delete(b);
         boxes2.add(far);
+        if (goalDist !== null && freezeDeadlock(p, boxes2, goalDist, far)) {
+          pruned++;
+          continue;
+        } // freeze deadlock: this push pins a box off-goal forever
         const player2 = b; // player ends where the box was
         const cost = cur.g + (dist.get(pushFrom) ?? 0) + 1;
         const info = regionInfo(p, boxes2, player2);
@@ -420,8 +504,10 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
           pruned++;
           continue;
         }
+        // O(1) heuristic update: only box `b` moved, from b to far (both finite).
+        const h2 = goalDist === null ? 0 : cur.h - goalDist[b] + goalDist[far];
         reached.set(key2, { g: cost, parent: cur.key, viaBox: b, viaTo: far });
-        heap.push({ key: key2, player: player2, g: cost, region: info.size });
+        heap.push({ key: key2, player: player2, g: cost, h: h2, f: cost + W * h2, region: info.size });
         pushed++;
       }
     }

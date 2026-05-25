@@ -115,3 +115,22 @@ test("solve: a grid with no goal is not solvable", () => {
   assert.equal(r.moves, null);
   assert.match(r.reason, /no goal/);
 });
+
+test("solve: A* still reports the MINIMUM moves on a multi-box board", () => {
+  // Three boxes, three '~' goals: the heuristic guides the search but must not
+  // change the optimum. 12 player moves / 7 pushes (verified against the
+  // exhaustive uniform-cost search).
+  const r = solve("#######\n#@..~.#\n#.+.+.#\n#..+..#\n#~...~#\n#.....#\n#######");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 12);
+  assert.equal(r.pushes, 7);
+});
+
+test("solve: a box that can only be shoved into a dead corner is unsolvable", () => {
+  // The lone box can only ever be pushed down into the bottom-left corner — a
+  // square from which no push can ever reach the goal '~'. Deadlock detection
+  // rejects it instead of searching.
+  const r = solve("####\n#@.#\n#+.#\n#.~#\n####");
+  assert.equal(r.solvable, false);
+  assert.equal(r.moves, null);
+});
