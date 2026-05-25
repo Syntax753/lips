@@ -73,28 +73,57 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
   const height = rows.length;
   const width = rows[0].length;
   const states: NextState[] = [];
+  const inBounds = (rr: number, cc: number): boolean => rr >= 0 && rr < height && cc >= 0 && cc < width;
 
+  // Glyphs each subject may step directly onto (floor / goal), keyed by subject.
+  const targetsBySubject = new Map<string, Set<string>>();
   for (const rule of ruleset.rules) {
-    for (let r = 0; r < height; r++) {
-      for (let c = 0; c < width; c++) {
-        if (rows[r][c] !== rule.subject) continue;
-        for (const [dr, dc] of DIRECTIONS) {
-          const nr = r + dr;
-          const nc = c + dc;
-          if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
-          // Walls are impassable: the subject may never move onto one, whatever
-          // the MOV rules happen to allow.
-          if (ruleset.wall && rows[nr][nc] === ruleset.wall) continue;
-          if (rows[nr][nc] !== rule.object) continue;
+    let set = targetsBySubject.get(rule.subject);
+    if (!set) targetsBySubject.set(rule.subject, (set = new Set()));
+    set.add(rule.object);
+  }
 
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c++) {
+      const subject = rows[r][c];
+      const moveTargets = targetsBySubject.get(subject);
+      if (!moveTargets) continue; // this cell is not a movable subject
+
+      for (const [dr, dc] of DIRECTIONS) {
+        const nr = r + dr;
+        const nc = c + dc;
+        if (!inBounds(nr, nc)) continue;
+        const target = rows[nr][nc];
+
+        // Walls are impassable — the subject may never move onto one.
+        if (ruleset.wall && target === ruleset.wall) continue;
+
+        // Box: moving onto it is legal ONLY if it can be pushed. The tile one
+        // step further in the same direction must be empty floor; the box slides
+        // there and the subject takes the box's old square.
+        if (ruleset.box && target === ruleset.box) {
+          const fr = nr + dr;
+          const fc = nc + dc;
+          if (!inBounds(fr, fc)) continue; // nothing beyond the box to push into
+          if (rows[fr][fc] !== ruleset.floor) continue; // far side is not empty floor
           const next = rows.map((row) => row.split(""));
-          next[r][c] = ruleset.floor; // player leaves floor behind
-          next[nr][nc] = rule.subject;
+          next[r][c] = ruleset.floor; // subject leaves floor behind
+          next[nr][nc] = subject; // subject moves onto the box's old square
+          next[fr][fc] = ruleset.box; // box pushed one step further
           const grid2 = next.map((row) => row.join("")).join("\n");
+          // A push lands the subject where the box was, never on the goal.
+          states.push({ grid: grid2, success: false, score: distance(grid2, subject, ruleset.goal) });
+          continue;
+        }
 
-          const success = rule.object === ruleset.goal; // landed on the goal
-          const score = success ? 0 : distance(grid2, rule.subject, ruleset.goal);
-          states.push({ grid: grid2, success, score });
+        // Plain move onto a floor / goal tile.
+        if (moveTargets.has(target)) {
+          const next = rows.map((row) => row.split(""));
+          next[r][c] = ruleset.floor; // subject leaves floor behind
+          next[nr][nc] = subject;
+          const grid2 = next.map((row) => row.join("")).join("\n");
+          const success = target === ruleset.goal; // landed on the goal
+          states.push({ grid: grid2, success, score: success ? 0 : distance(grid2, subject, ruleset.goal) });
         }
       }
     }
@@ -113,7 +142,7 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
 
 export const statemachineTool = tool(
   "statemachine",
-  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable. Each has `grid`, `success` (true if it lands the player on the goal 'x'), and `score` (Manhattan distance of the player to the goal; lower = closer). `success` at top level is true if any next state wins.",
+  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable; a box '+' may be pushed only when the tile beyond it (away from the player) is empty floor '.' (the box slides there, the player takes its square). Each has `grid`, `success` (true if it lands the player on the goal 'x'), and `score` (Manhattan distance of the player to the goal; lower = closer). `success` at top level is true if any next state wins.",
   {
     grid: z.string().describe("the current state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

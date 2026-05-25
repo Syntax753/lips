@@ -17,6 +17,12 @@ export type RuleSet = {
   goal: string;
   /** Impassable glyph: no subject may ever move onto it (e.g. a wall). Optional. */
   wall?: string;
+  /**
+   * Pushable glyph (e.g. a box): a subject may move onto it ONLY if the tile one
+   * step further in the same direction is empty floor; the box slides there and
+   * the subject takes the box's old square. Optional.
+   */
+  box?: string;
 };
 
 export function parseRule(text: string): Rule {

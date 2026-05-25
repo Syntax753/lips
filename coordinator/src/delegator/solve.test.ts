@@ -49,6 +49,23 @@ test("solve: walls can make the goal unreachable", () => {
   assert.equal(r.moves, null);
 });
 
+test("solve: pushes a '+' box out of the way to reach the goal", () => {
+  // Walls leave only ONE first move — pushing the box down — then 3 more. 4 total.
+  const r = solve("#@##\n#+.#\n#..#\n#.x#");
+  assert.equal(r.solvable, true);
+  assert.equal(r.moves, 4);
+  // The first step pushed the box down: player onto the box's old square, box one further.
+  assert.equal(r.path?.[1], "#.##\n#@.#\n#+.#\n#.x#");
+  assert.equal((r.path![1].match(/\+/g) ?? []).length, 1); // still exactly one box
+});
+
+test("solve: a box that can't be pushed onto the goal seals it off", () => {
+  // 1-wide corridor; the box sits between @ and x and can't be pushed onto 'x'.
+  const r = solve("###\n@+x\n###");
+  assert.equal(r.solvable, false);
+  assert.equal(r.moves, null);
+});
+
 test("solve: no goal -> not solvable, and pruning skips revisited states", () => {
   const r = solve("@..\n...\n...");
   assert.equal(r.solvable, false);

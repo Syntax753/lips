@@ -215,7 +215,7 @@ export const bestmoveTool = tool(
 
 export const solveTool = tool(
   "solve",
-  "Deterministically decide whether the player '@' can reach the goal 'x' in a grid (ruleset default 'sokoban'), and in how many moves. The player moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable and must be routed around. Breadth-first search in code, so `moves` is the MINIMUM. Pruned by a visited set (a state already on the frontier/seen is never reprocessed). Returns { solvable, moves, path (start..win), winning, explored, pushed, pruned }.",
+  "Deterministically decide whether the player '@' can reach the goal 'x' in a grid (ruleset default 'sokoban'), and in how many moves. The player moves orthogonally onto floor '.' or goal 'x'; walls '#' are impassable and must be routed around; a box '+' can be pushed when the tile beyond it is empty floor '.'. Breadth-first search in code, so `moves` is the MINIMUM. Pruned by a visited set (a state already on the frontier/seen is never reprocessed). Returns { solvable, moves, path (start..win), winning, explored, pushed, pruned }.",
   {
     grid: z.string().describe("the start state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

@@ -56,3 +56,24 @@ test("expand treats '#' walls as impassable", () => {
   // Every next state keeps both walls intact (none was overwritten by the move).
   assert.ok(r.states.every((s) => (s.grid.match(/#/g) ?? []).length === 2));
 });
+
+test("expand pushes a '+' box when empty floor is beyond it", () => {
+  // @+. : the box slides right onto the floor; @ takes the box's old square.
+  const r = expand("@+.");
+  assert.equal(r.count, 1);
+  assert.equal(r.states[0].grid, ".@+");
+  assert.equal((r.states[0].grid.match(/\+/g) ?? []).length, 1); // still exactly one box
+});
+
+test("expand will not push a box without empty floor beyond it", () => {
+  assert.equal(expand("@+#").count, 0); // far tile is a wall
+  assert.equal(expand("@+x").count, 0); // far tile is the goal, not floor
+  assert.equal(expand("@++").count, 0); // far tile is another box
+  assert.equal(expand("@+").count, 0); // box at the edge: nothing beyond to push into
+});
+
+test("expand rejects a ragged grid", () => {
+  const r = expand("...\n.@");
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /same width/);
+});
