@@ -66,6 +66,14 @@ function reconstruct(parent: Map<string, string | null>, node: string): string[]
   return path.reverse();
 }
 
+/**
+ * Cap on the recorded search trace. The BFS may explore a huge number of states
+ * on a big grid; the trace is only for human-readable visibility, so we record
+ * the first MAX_TRACE pops and stop (the search itself is unbounded). Without
+ * this, serialising a multi-million-entry trace overflows V8's max string length.
+ */
+const MAX_TRACE = 200;
+
 export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): SolveResult {
   const ruleset = getRuleSet(rulesetName);
   const start = normalize(grid);
@@ -185,16 +193,18 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       pushed++;
     }
     pruned += ev.seen.length;
-    trace.push({
-      step: explored,
-      grid: compact(current),
-      depth,
-      goal: false,
-      moves: [
-        ...ev.fresh.map((s) => ({ grid: compact(s.grid), status: "queued" as const })),
-        ...ev.seen.map((s) => ({ grid: compact(s.grid), status: "seen" as const })),
-      ],
-    });
+    if (trace.length < MAX_TRACE) {
+      trace.push({
+        step: explored,
+        grid: compact(current),
+        depth,
+        goal: false,
+        moves: [
+          ...ev.fresh.map((s) => ({ grid: compact(s.grid), status: "queued" as const })),
+          ...ev.seen.map((s) => ({ grid: compact(s.grid), status: "seen" as const })),
+        ],
+      });
+    }
   }
 
   return fail("frontier exhausted — no path to the goal");

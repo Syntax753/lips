@@ -182,6 +182,11 @@ function searchTrace(result: string | null): SearchTraceView | null {
     }
     for (const m of moves) pops.push(`    ${m.grid}  ${label(m.status)}`);
   }
+  const exploredN = typeof o.explored === "number" ? o.explored : steps.length;
+  const shown = steps.filter((t) => !t.goal).length;
+  if (shown < exploredN) {
+    pops.push(`… trace truncated — ${exploredN} states explored in total, first ${shown} shown`);
+  }
   const header = `BFS — popped ${o.explored} states off the queue, pruned ${o.pruned ?? 0} already-seen:`;
   const path = Array.isArray(o.path) ? (o.path as string[]).map((g) => g.replace(/\n/g, " / ")) : [];
   const summary = o.solvable
