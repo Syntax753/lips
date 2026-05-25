@@ -22,6 +22,13 @@ import { logVerbose, getLogLevel } from "../logger.js";
  * the heuristic and pruning need every box to map to a goal, so they engage only
  * when #boxes === #box goals (otherwise h = 0, i.e. plain uniform-cost). Each
  * popped state is logged live.
+ *
+ * LIPS_SEARCH=rooms switches to a room-guided SATISFICING search for boards too
+ * large to solve optimally: the grid is split into rooms joined by doorways (see
+ * `analyzeRooms`), and the frontier is ordered greedily by uncovered goals, then
+ * boxes still outside a goal-bearing room, then total goal distance — driving
+ * boxes out of reservoir rooms toward goals. It returns the FIRST solution it
+ * finds, so `moves` is no longer guaranteed minimal.
  */
 
 export type SolveResult = {
@@ -281,6 +288,78 @@ function freezeDeadlock(p: Parsed, boxes: Set<number>, goalDist: number[], pushe
   return false;
 }
 
+/**
+ * Decompose the player-reachable maze into ROOMS (open areas) joined by DOORWAYS
+ * (cells pinched to one tile wide). Rooms are the connected components of the
+ * reachable floor once doorway cells are removed. Returns each cell's room id
+ * (-1 for walls / doorways / unreachable) and which rooms contain a box goal.
+ * Used by the room-guided search to prioritise pushing boxes out of goal-less
+ * rooms (e.g. a box reservoir) and into rooms that actually hold goals.
+ */
+function analyzeRooms(p: Parsed): { roomOf: Int32Array; goalRoom: boolean[] } {
+  const N = p.w * p.h;
+  const roomOf = new Int32Array(N).fill(-1);
+  const isWallRC = (r: number, c: number): boolean => r < 0 || r >= p.h || c < 0 || c >= p.w || p.walls.has(r * p.w + c);
+
+  // Reachable floor (static topology: walls only, boxes ignored).
+  const reach = new Uint8Array(N);
+  const q = [p.player];
+  reach[p.player] = 1;
+  for (let hd = 0; hd < q.length; hd++) {
+    const cell = q[hd];
+    const r = Math.floor(cell / p.w);
+    const c = cell % p.w;
+    for (const [dr, dc] of DIRS) {
+      const nr = r + dr;
+      const nc = c + dc;
+      if (isWallRC(nr, nc)) continue;
+      const n = nr * p.w + nc;
+      if (reach[n]) continue;
+      reach[n] = 1;
+      q.push(n);
+    }
+  }
+
+  // Doorway = reachable cell walled on both sides of either axis (1-wide).
+  const door = new Uint8Array(N);
+  for (let cell = 0; cell < N; cell++) {
+    if (!reach[cell]) continue;
+    const r = Math.floor(cell / p.w);
+    const c = cell % p.w;
+    if ((isWallRC(r - 1, c) && isWallRC(r + 1, c)) || (isWallRC(r, c - 1) && isWallRC(r, c + 1))) door[cell] = 1;
+  }
+
+  // Rooms = connected components of reachable, non-doorway cells.
+  let nRooms = 0;
+  for (let cell = 0; cell < N; cell++) {
+    if (!reach[cell] || door[cell] || roomOf[cell] >= 0) continue;
+    const id = nRooms++;
+    const qq = [cell];
+    roomOf[cell] = id;
+    for (let hd = 0; hd < qq.length; hd++) {
+      const x = qq[hd];
+      const r = Math.floor(x / p.w);
+      const c = x % p.w;
+      for (const [dr, dc] of DIRS) {
+        const nr = r + dr;
+        const nc = c + dc;
+        if (isWallRC(nr, nc)) continue;
+        const n = nr * p.w + nc;
+        if (!reach[n] || door[n] || roomOf[n] >= 0) continue;
+        roomOf[n] = id;
+        qq.push(n);
+      }
+    }
+  }
+
+  const goalRoom = new Array<boolean>(nRooms).fill(false);
+  for (const g of p.boxGoals) {
+    const id = roomOf[g];
+    if (id >= 0) goalRoom[id] = true;
+  }
+  return { roomOf, goalRoom };
+}
+
 const allCovered = (p: Parsed, boxes: Set<number>): boolean => {
   for (const g of p.boxGoals) if (!boxes.has(g)) return false;
   return true;
@@ -307,19 +386,21 @@ type Entry = {
   viaTo: number; // cell it was pushed to
 };
 
-// Minimal binary min-heap ordered by (f, regionSize) where f = g + W·h is the
-// A* priority — lowest estimated total first; fewest-equivalent-states (smallest
-// region) breaks ties. `g` is the real player-step cost (kept for the stale
-// check and the result); `h` is the raw heuristic (kept for the O(1) child
-// update).
-type HeapItem = { key: string; player: number; g: number; h: number; f: number; region: number };
+// Minimal binary min-heap ordered by (pri, regionSize) — lowest priority first,
+// fewest-equivalent-states (smallest region) breaks ties. `pri` is the search
+// key: in optimal mode it is the A* f = g + W·h; in room-guided mode it is a
+// greedy score (uncovered goals, then boxes not yet in a goal room, then total
+// goal distance). The components are carried so the child's values update in
+// O(1): `g` real player-step cost (also used for the stale check / result), `h`
+// total goal-distance, `unc` uncovered goals, `nhome` boxes outside a goal room.
+type HeapItem = { key: string; player: number; g: number; h: number; unc: number; nhome: number; pri: number; region: number };
 class Heap {
   private a: HeapItem[] = [];
   get size(): number {
     return this.a.length;
   }
   private less(i: number, j: number): boolean {
-    return this.a[i].f !== this.a[j].f ? this.a[i].f < this.a[j].f : this.a[i].region < this.a[j].region;
+    return this.a[i].pri !== this.a[j].pri ? this.a[i].pri < this.a[j].pri : this.a[i].region < this.a[j].region;
   }
   push(item: HeapItem): void {
     const a = this.a;
@@ -415,10 +496,33 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   const h0 = hOf(p.boxes);
   if (h0 === Infinity) return fail("a box starts where it can never reach any goal — unsolvable", true, 0, 0, 0);
 
+  // Room-guided satisficing mode (LIPS_SEARCH=rooms): a greedy best-first search
+  // that drives boxes out of goal-less rooms toward goal rooms. It finds *a*
+  // solution on boards too large for the optimal search, but `moves` is no
+  // longer guaranteed minimal. Only meaningful when the box-goal heuristic is
+  // active (so goal rooms are defined); otherwise we stay optimal.
+  const useRooms = (process.env.LIPS_SEARCH ?? "").toLowerCase() === "rooms" && goalDist !== null;
+  const rooms = useRooms ? analyzeRooms(p) : null;
+  // A box is "not home" if it sits off a goal and outside any goal-bearing room.
+  const notHome = (cell: number): number => {
+    if (!rooms || p.boxGoals.has(cell)) return 0;
+    const id = rooms.roomOf[cell];
+    return id >= 0 && rooms.goalRoom[id] ? 0 : 1;
+  };
+  // Lexicographic greedy priority packed into one number: uncovered ≫ not-home ≫ goal-distance.
+  const HSPAN = p.boxes.size * (p.w * p.h) + 1; // exceeds any sum of goal distances
+  const NSPAN = (p.boxes.size + 1) * HSPAN; // exceeds any (not-home · HSPAN + h)
+  const priOf = (g: number, h: number, unc: number, nhome: number): number => (useRooms ? unc * NSPAN + nhome * HSPAN + h : g + W * h);
+
+  let unc0 = 0;
+  for (const goal of p.boxGoals) if (!p.boxes.has(goal)) unc0++;
+  let nhome0 = 0;
+  for (const b of p.boxes) nhome0 += notHome(b);
+
   const start0 = regionInfo(p, p.boxes, p.player);
   const sKey = `${boxesKey(p.boxes)}|${start0.canonical}`;
   reached.set(sKey, { g: 0, parent: null, viaBox: -1, viaTo: -1 });
-  heap.push({ key: sKey, player: p.player, g: 0, h: h0, f: W * h0, region: start0.size });
+  heap.push({ key: sKey, player: p.player, g: 0, h: h0, unc: unc0, nhome: nhome0, pri: priOf(0, h0, unc0, nhome0), region: start0.size });
 
   let explored = 0;
   let pushed = 1;
@@ -435,7 +539,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       pruned++;
       continue;
     } // stale (a cheaper arrival superseded it)
-    if (cur.f >= bestWin) break; // A*: the cheapest possible finish can't beat the best found
+    if (cur.pri >= bestWin) break; // optimal A*: cheapest possible finish can't beat the best found (inert in room mode — see below)
 
     explored++;
     if (explored > MAX_EXPLORED) {
@@ -448,7 +552,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
 
     if (logVerboseEnabled()) {
       if (logged < MAX_TRACE) {
-        logVerbose(`  [${String(explored).padStart(6)}] f ${String(cur.f).padStart(4)} = g ${String(cur.g).padStart(4)} + h ${String(cur.h).padStart(4)} | ${region} equiv | ${compact(render(p, boxes, cur.player))}`);
+        logVerbose(`  [${String(explored).padStart(6)}] pri ${String(cur.pri).padStart(6)} g ${String(cur.g).padStart(4)} h ${String(cur.h).padStart(4)} unc ${String(cur.unc).padStart(2)} | ${region} equiv | ${compact(render(p, boxes, cur.player))}`);
         logged++;
         if (logged === MAX_TRACE) logVerbose(`  … (further states not logged; --log=basic to silence)`);
       }
@@ -466,6 +570,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
           winFrom = { key: cur.key, walkToGoal: walkSteps(prev, p.playerGoal) };
         }
       }
+      if (useRooms && winFrom) break; // greedy: take the first solution found
     }
 
     // Expand pushes: for each box, each direction, if the player can reach the
@@ -504,10 +609,12 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
           pruned++;
           continue;
         }
-        // O(1) heuristic update: only box `b` moved, from b to far (both finite).
+        // O(1) component updates: only box `b` moved, from b to far.
         const h2 = goalDist === null ? 0 : cur.h - goalDist[b] + goalDist[far];
+        const unc2 = cur.unc + (p.boxGoals.has(b) ? 1 : 0) - (p.boxGoals.has(far) ? 1 : 0);
+        const nhome2 = cur.nhome - notHome(b) + notHome(far);
         reached.set(key2, { g: cost, parent: cur.key, viaBox: b, viaTo: far });
-        heap.push({ key: key2, player: player2, g: cost, h: h2, f: cost + W * h2, region: info.size });
+        heap.push({ key: key2, player: player2, g: cost, h: h2, unc: unc2, nhome: nhome2, pri: priOf(cost, h2, unc2, nhome2), region: info.size });
         pushed++;
       }
     }
@@ -566,7 +673,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
     pruned,
     path: cappedPath,
     winning,
-    reason: "goal reached",
+    reason: useRooms ? "goal reached (room-guided search — solution found, not necessarily minimal)" : "goal reached",
   };
 }
 
