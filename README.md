@@ -89,6 +89,68 @@ npm run repl      # start the REPL   (or: npm run dev — runs from source via t
 `npm run setup` is optional: the REPL also provisions Go and builds the server
 on startup. Run it explicitly when you just want to compile and test the Go side.
 
+## Drop-in MCP server
+
+lips ships a **standalone stdio MCP server** — the deterministic core of the
+engine, packaged so any project (or agent) can add it to its MCP config and call
+the solvers directly. No Claude session, no auth, fully reproducible.
+
+```sh
+cd coordinator && npm run build      # compiles dist/ (prebuild cleans stale output)
+```
+
+Then register it in a host's MCP config (Claude Code, another agent, etc.):
+
+```json
+{
+  "mcpServers": {
+    "lips": { "command": "node", "args": ["<repo>/coordinator/dist/mcpServer.js"] }
+  }
+}
+```
+
+It exposes four tools:
+
+- **`validate`** — the single routing entry. Classify any input by structure and
+  run the matching solver, returning a uniform verdict
+  `{ kind, valid, witness, metrics, reason }`:
+  an ASCII **grid** → Sokoban solvability + minimum moves; **equations** with
+  unknowns → the linear-system solution; a JSON **timeline** (a list of characters
+  with presence intervals) → encounter reachability; a numeric comparison or
+  `and`/`or` **chain** → a truth. Free natural language returns `kind:"unknown"` —
+  that is the agentic coordinator's job to decompose, not the deterministic core's
+  to guess.
+- **`solve`** — solve a Sokoban grid for the minimum moves/pushes.
+- **`bestmove`** — the single best next step toward the win for a grid.
+- **`reachable`** — given characters as lists of `{ starttime, endtime, locationid }`
+  intervals, decide whether a player who switches between co-located characters can
+  encounter every character from any starting one (co-location graph connectivity).
+- **`algebraic`** — solve a linear system end-to-end.
+
+This is the lower of two layers: the deterministic solver server is the
+dependable building block, and the **agentic coordinator** (classify → decompose
+NL → delegate → compose, the REPL above) is an optional layer that sits on top of
+it. A host can drive the leaf solvers itself, or hand a whole problem to the
+coordinator and watch it delegate.
+
+### Example corpus & tuning bench
+
+Solvable-input examples across every domain live in `src/corpus/cases.ts`, each
+with its expected verdict. The runner feeds every case through the one
+`validate` entry, so the corpus is the end-to-end test of classify → route →
+solve:
+
+```sh
+npm test                  # includes the corpus suite (src/corpus/corpus.test.ts)
+npm run bench             # run the HARD boards under every search mode, print metrics
+LIPS_MAX_STATES=300000 npm run bench
+```
+
+`bench` is for tuning, not pass/fail: it reports search effort
+(explored / pushed / pruned / ms) on large boards so a heuristic change can be
+measured. (The headline 19×17 board is currently an open tuning target — no mode
+solves it within default caps yet.)
+
 ## Using the REPL
 
 ```
@@ -147,11 +209,23 @@ The pieces are arranged so the next phases drop in without reshaping the core:
 2. **Linear algebra** *(landed)* — the algebraic delegator resolves linear systems
    deterministically (evaluate → reduce → solve); the coordinator just translates
    word problems into equations and hands off the `RDR` list.
-3. **More delegators & comparators** — non-algebraic `delegator/` domains and more
-   `cmp/` types (dates, versions, object comparison by field), all behind the same
-   classify → delegate interface.
-4. **Beyond linear** — quadratic/nonlinear solvers; the evaluator would need a
-   stronger solvability check than count + connectivity.
-5. **Prompts** — add MCP prompts to the Go server for guided symbolic input.
-6. **Mathematical proofs** — have the coordinator orchestrate multi-step reasoning
-   over the decomposed results.
+3. **Grid solving** *(landed)* — an equivalence-collapsed, A\*-ordered Sokoban
+   solver with deadlock pruning, tunnel macros, and two satisficing modes for
+   large boards (`LIPS_SEARCH=rooms|decompose`).
+4. **Uniform solver contract + drop-in MCP server** *(landed)* — every solver
+   answers in one `{ kind, valid, witness, metrics, reason }` shape; a
+   deterministic classifier routes by input; all of it exposed as a standalone
+   stdio MCP server (`validate` / `solve` / `bestmove` / `algebraic`) plus an
+   example corpus and tuning bench. See **Drop-in MCP server** above.
+5. **Timelines** *(landed)* — an encounter-reachability solver: each character is
+   a list of presence intervals `{ starttime, endtime, locationid }`; two
+   characters interact when co-located in overlapping time, and the player can
+   switch between them. Validation = the co-location graph is connected (encounter
+   everyone from anyone). Exposed as the `reachable` tool and behind `validate`.
+6. **Agentic wrapper** — expose the coordinator itself as a `validate-smart` MCP
+   tool, so a host can hand it free natural language and have it decompose,
+   delegate to the deterministic leaves, and compose — the agentic layer atop the
+   deterministic core.
+7. **More delegators & comparators** — more `cmp/` types (dates, versions, object
+   comparison by field); quadratic/nonlinear solvers; MCP prompts for guided
+   symbolic input; multi-step proofs.
