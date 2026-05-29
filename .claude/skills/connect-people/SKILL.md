@@ -13,22 +13,48 @@ timeline solver so the answer is reproducible and not a hallucinated guess.
 
 The model: each shared work/event is a **co-location in time**. Two people are
 linked when they appear in the same documented work whose years overlap; chaining
-those links connects the whole set. A boolean "are X and Y associated?" reduces to
-connecting exactly those two.
+those links connects the whole set (the solver computes **transitive**
+connectivity, so an A→B→C link needs no special handling). A boolean "are X and Y
+associated?" reduces to connecting exactly those two.
+
+## Mode — closed-world vs open-world (decide this FIRST)
+
+- **Closed-world — the request PROVIDES timelines/intervals.** Analyse *only* the
+  given data. Pass it straight to the solver and report the verdict as final. A
+  `NOT CONNECTED` here is a real answer (the world is exactly what was given) — do
+  **not** search for more.
+
+- **Open-world — only the people/entities are named, no timeline data.** Absence of
+  a connection in nothing is not evidence of none. You **must search** to discover
+  their documented appearances (and likely intermediaries) before concluding. Here
+  a "not connected" is only ever *"no link found within the search budget"* — never
+  a proof of unrelatedness. Only closed-world disconnection is a proof.
 
 ## Steps
 
-1. **Identify the people** (2+). If only two and the ask is yes/no, that's still a
-   connect of those two.
+1. **Identify the people** (2+) and pick the mode above. If only two and the ask is
+   yes/no, that's still a connect of those two. If intervals were supplied, skip to
+   step 6 (verify) on exactly those.
 
-2. **Discover appearances (web search).** For each person, search authoritative
-   sources for documented works/events they appeared in — films, TV, concerts,
-   albums/recordings, notable co-credited events — and their **birth/death years**.
+2. **Discover appearances (web search) — open-world only.** For each person, search
+   authoritative sources for documented works/events they appeared in — films, TV,
+   concerts, albums/recordings, notable co-credited events — and their **birth/death
+   years**.
    - Fan out: one focused search per person, plus targeted "X and Y same film/
      project" searches between pairs you suspect connect.
    - Record each appearance as a presence interval: `locationid` = the work's
      canonical title, `starttime`/`endtime` = its **year** (a single year is fine;
      use a range only for multi-year runs). **Year granularity by default.**
+
+2b. **Find the transitive bridge (open-world).** If no *direct* shared work links
+   the targets, look for a path through intermediaries (the "six degrees" case):
+   search each target's frequent collaborators / shared franchises, add those people
+   and their relevant works, and let the solver find the chain. Expand outward in
+   **bounded hops** (≈2–3) — log what you searched. If still unconnected after the
+   budget, that is *"no link found within N hops"*, **not** proof of unrelatedness.
+   (Feasibility still applies: people whose lifespans never overlap — e.g. a
+   1st-century figure and a modern actor — cannot share a documented appearance, so
+   no bridge can exist; say so.)
 
 3. **Edge rule (be strict).** An edge exists ONLY between two people who appear in
    the **same documented work/event** with overlapping years. Birth/death years are
@@ -69,7 +95,9 @@ connecting exactly those two.
      Monkeys* (1995)"* — citing a source for each linking work.
    - **Not connected:** name the separate `components` (the groups that never share
      a work) so the user sees exactly what's stranded, and what evidence would
-     bridge them.
+     bridge them. State the mode: in **closed-world** this is a definitive *no*; in
+     **open-world** it is only *"no link found within the search budget"* — say which
+     intermediaries you tried and that a deeper search could still find one.
    - Always flag any *unverified* link the conclusion leaned on.
 
 ## Notes
