@@ -286,6 +286,12 @@ The pieces are arranged so the next phases drop in without reshaping the core:
    deterministic solver (`reachable`, or `npm run connect -- <file.json>`) to prove
    connectivity and return the encounter chain. Search lives in the skill; the
    verdict stays deterministic.
-9. **More delegators & comparators** — more `cmp/` types (dates, versions, object
-   comparison by field); quadratic/nonlinear solvers; MCP prompts for guided
-   symbolic input; multi-step proofs.
+9. **Beyond linear** *(first slice landed)* — `^` power notation parses, and a
+   sound nonlinear analyzer gives a **domain-aware** verdict (ℝ and ℂ) for the
+   forms it can prove — sum-of-even-powers sign analysis (a sum of squares can't be
+   negative), single-variable quadratics (discriminant) and odd-degree — and
+   explicitly *defers* the rest rather than guessing. e.g. `x^2 + y^2 = -1` → no
+   real solution, solvable over ℂ.
+10. **More delegators & comparators** — more `cmp/` types (dates, versions, object
+    comparison by field); a fuller nonlinear solver; MCP prompts for guided
+    symbolic input; multi-step proofs.

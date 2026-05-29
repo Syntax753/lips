@@ -1,6 +1,7 @@
 import type { SolveResult } from "../delegator/solve.js";
 import type { AlgebraicResult } from "../delegator/algebraic.js";
 import type { TimelineResult } from "../delegator/timeline.js";
+import type { NonlinearResult } from "../delegator/nonlinear.js";
 
 /**
  * The uniform contract every lips solver speaks.
@@ -74,6 +75,18 @@ export function fromAlgebraic(r: AlgebraicResult): Verdict {
       equations: r.preflight.equationCount,
       unknowns: r.preflight.unknownCount,
     }),
+    reason: r.reason,
+  };
+}
+
+/** Adapt the nonlinear analyzer's result. `valid` is the default-domain (ℝ)
+ *  answer; the witness carries both ℝ and ℂ verdicts and a sample solution. */
+export function fromNonlinear(r: NonlinearResult): Verdict {
+  return {
+    kind: "algebraic",
+    valid: r.reals === "solvable",
+    witness: r.ok ? { reals: r.reals, complex: r.complex, sample: r.witness } : null,
+    metrics: {},
     reason: r.reason,
   };
 }

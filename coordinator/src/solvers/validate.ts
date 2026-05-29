@@ -1,9 +1,10 @@
 import { solve } from "../delegator/solve.js";
 import { solveSystem } from "../delegator/algebraic.js";
 import { solveTimeline } from "../delegator/timeline.js";
+import { analyzeNonlinear } from "../delegator/nonlinear.js";
 import { classify, type Classification } from "./classify.js";
 import { evaluateBoolean, fromBoolean } from "./boolean.js";
-import { fromGrid, fromAlgebraic, fromTimeline, type Verdict } from "./contract.js";
+import { fromGrid, fromAlgebraic, fromTimeline, fromNonlinear, type Verdict } from "./contract.js";
 
 /**
  * The deterministic router: classify an input, run the matching solver, and
@@ -34,6 +35,12 @@ function run(input: string, c: Classification): Verdict {
         .split(/[\n;]+/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+      // Power notation (`^`) is nonlinear — route to the sound nonlinear slice
+      // (single equation); the linear solver handles the rest.
+      if (equations.some((e) => /\^/.test(e))) {
+        if (equations.length === 1) return fromNonlinear(analyzeNonlinear(equations[0]));
+        return { kind: "algebraic", valid: false, witness: null, metrics: {}, reason: "nonlinear system — the nonlinear slice handles a single equation only" };
+      }
       return fromAlgebraic(solveSystem(equations));
     }
 

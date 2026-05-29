@@ -53,7 +53,8 @@ export const ALGEBRA_CASES: Case[] = [
   { id: "alg-1x1", domain: "algebraic", input: "2*a = 10", expect: { valid: true, solution: { a: 5 } }, difficulty: "trivial", source: "hand-verified" },
   { id: "alg-underdetermined", domain: "algebraic", input: "x + y = 3", expect: { valid: false }, difficulty: "easy", source: "hand-verified", note: "one equation, two unknowns" },
   { id: "alg-inconsistent", domain: "algebraic", input: "x = 1; x = 2", expect: { valid: false }, difficulty: "easy", source: "hand-verified", note: "no solution" },
-  { id: "alg-nonlinear", domain: "algebraic", input: "x^2 + y^2 = -1", expect: { valid: false }, difficulty: "easy", source: "hand-verified", note: "nonlinear — out of scope; must degrade gracefully (no throw), not solvable as linear" },
+  { id: "alg-nonlinear-no-real", domain: "algebraic", input: "x^2 + y^2 = -1", expect: { valid: false }, difficulty: "easy", source: "hand-verified", note: "sum of squares can't be negative -> no real solution (solvable over ℂ; see witness)" },
+  { id: "alg-nonlinear-real", domain: "algebraic", input: "x^2 + y^2 = 5", expect: { valid: true }, difficulty: "easy", source: "hand-verified", note: "sum of squares = positive -> real-solvable" },
 ];
 
 export const GRID_CASES: Case[] = [
