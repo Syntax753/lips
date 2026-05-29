@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { breakdown } from "./breakdown.js";
+import { breakdown, escalateBreakdown } from "./breakdown.js";
 
 test("a boolean chain splits into binary sections and composes", () => {
   const b = breakdown("5 > 3 and 2 < 1");
@@ -35,4 +35,21 @@ test("a single comparison is one binary section", () => {
   assert.equal(b.sections.length, 1);
   assert.equal(b.sections[0].type, "binary");
   assert.equal(b.sections[0].valid, false);
+});
+
+test("escalateBreakdown resolves deferred sections via the resolver, leaving deterministic ones", async () => {
+  const b = breakdown("is jesus related to stalone and 5 > 3");
+  let calls = 0;
+  const full = await escalateBreakdown(b, async (clause) => {
+    calls++;
+    return { answer: `resolved: ${clause}`, value: false, trace: ["coordinator (...)", "  --> false"] };
+  });
+  assert.equal(calls, 1); // only the deferred section is escalated
+  const deferred = full.sections.find((s) => s.clause.toLowerCase().includes("jesus"))!;
+  assert.match(deferred.tool, /agentic/);
+  assert.equal(deferred.valid, false);
+  assert.ok(deferred.agentic?.answer.startsWith("resolved:"));
+  const bool = full.sections.find((s) => s.kind === "boolean")!;
+  assert.equal(bool.agentic, undefined); // deterministic section untouched
+  assert.equal(bool.valid, true);
 });

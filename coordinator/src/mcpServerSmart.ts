@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { coordinate } from "./coordinator.js";
+import { breakdown, escalateBreakdown, renderBreakdown } from "./solvers/breakdown.js";
 import { ensureServerReady } from "./bootstrap.js";
 
 /**
@@ -40,6 +41,24 @@ server.registerTool(
     const r = await coordinate(input, (line) => process.stderr.write(line + "\n"));
     const answer = r.error ? `error: ${r.error}` : r.raw || "(no answer)";
     return { content: [{ type: "text" as const, text: `${answer}\n\n--- delegation trace ---\n${r.trace.join("\n")}` }] };
+  },
+);
+
+server.registerTool(
+  "breakdown",
+  {
+    title: "Full breakdown — deterministic sections, agentic for the deferred ones",
+    description:
+      "Decompose a compound statement into sections (which are BINARY truths vs which need ANALYSIS, and the leaf each used), THEN resolve every free-NL 'deferred' section by escalating it to the coordinator (decompose → delegate → compose). One call gives the verifiable per-section breakdown AND resolves the natural-language parts, each with its delegation trace. This is the unified view: deterministic where it can be, agentic where it must be.",
+    inputSchema: { input: z.string().describe("the compound statement to break down and resolve") },
+  },
+  async ({ input }) => {
+    const base = breakdown(input);
+    const full = await escalateBreakdown(base, async (clause) => {
+      const r = await coordinate(clause, (line) => process.stderr.write(line + "\n"));
+      return { answer: r.error ? `error: ${r.error}` : r.raw || "(no answer)", value: r.value, trace: r.trace };
+    });
+    return { content: [{ type: "text" as const, text: renderBreakdown(full) }] };
   },
 );
 

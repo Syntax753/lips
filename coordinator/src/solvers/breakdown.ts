@@ -29,6 +29,8 @@ export interface Section {
   /** The verdict, or null when deferred. */
   valid: boolean | null;
   reason: string;
+  /** Set when a deferred section was escalated to the agentic coordinator. */
+  agentic?: { answer: string; value: boolean | null; trace: string[] };
 }
 
 export interface Breakdown {
@@ -97,22 +99,46 @@ export function breakdown(input: string): Breakdown {
     connector = null;
   }
 
-  let composition: string;
-  if (sections.length === 0) {
-    composition = "empty";
-  } else if (sections.every((s) => s.kind === "boolean" && s.valid !== null)) {
+  return { input, sections, composition: compose(sections) };
+}
+
+/** Compose the section verdicts into one summary line. */
+function compose(sections: Section[]): string {
+  if (sections.length === 0) return "empty";
+  if (sections.every((s) => s.kind === "boolean" && s.valid !== null)) {
     // All binary → fold the and/or connectors into one truth.
     let acc = sections[0].valid as boolean;
     for (let i = 1; i < sections.length; i++) {
       acc = sections[i].connector === "or" ? acc || (sections[i].valid as boolean) : acc && (sections[i].valid as boolean);
     }
-    composition = `boolean composition → ${acc}`;
-  } else if (sections.length === 1) {
-    composition = sections[0].valid === null ? "single section → deferred to the agentic layer" : `single ${sections[0].type} section → ${sections[0].valid}`;
-  } else {
-    composition = "mixed-domain compound → each section answered independently above";
+    return `boolean composition → ${acc}`;
   }
-  return { input, sections, composition };
+  if (sections.some((s) => s.type === "deferred" && s.valid === null)) {
+    return "compound with unresolved section(s) — escalate to the agentic layer";
+  }
+  if (sections.length === 1) return `single ${sections[0].type} section → ${sections[0].valid}`;
+  return "mixed-domain compound → each section answered independently above";
+}
+
+/**
+ * Resolve every DEFERRED (free-NL) section by escalating it to the agentic
+ * coordinator — `resolve` runs `validate-smart` on the clause and returns its
+ * answer, a parsed boolean (if any), and the delegation trace. Deterministic
+ * sections are left untouched. The deterministic core has no `resolve`; only the
+ * agentic server wires one in, which keeps the layering intact.
+ */
+export async function escalateBreakdown(
+  b: Breakdown,
+  resolve: (clause: string) => Promise<{ answer: string; value: boolean | null; trace: string[] }>,
+): Promise<Breakdown> {
+  const sections = await Promise.all(
+    b.sections.map(async (s): Promise<Section> => {
+      if (s.type !== "deferred") return s;
+      const r = await resolve(s.clause);
+      return { ...s, tool: "agentic coordinator (validate-smart)", valid: r.value, reason: r.answer || s.reason, agentic: r };
+    }),
+  );
+  return { input: b.input, sections, composition: compose(sections) };
 }
 
 /** A readable, verifiable rendering of the breakdown. */
@@ -121,8 +147,11 @@ export function renderBreakdown(b: Breakdown): string {
   for (const s of b.sections) {
     const conn = s.connector ? `(${s.connector}) ` : "";
     const verdict = s.valid === null ? "deferred" : String(s.valid);
-    lines.push(`  [${s.index}] ${conn}${s.type} · ${s.kind} · ${s.tool}`);
+    lines.push(`  [${s.index}] ${conn}${s.type}${s.agentic ? " → escalated" : ""} · ${s.kind} · ${s.tool}`);
     lines.push(`        "${s.clause}"  →  ${verdict}   (${s.reason})`);
+    if (s.agentic && s.agentic.trace.length > 0) {
+      for (const t of s.agentic.trace) lines.push(`           ${t}`);
+    }
   }
   lines.push(`  ⇒ ${b.composition}`);
   return lines.join("\n");

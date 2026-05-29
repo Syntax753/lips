@@ -122,8 +122,10 @@ It exposes four tools:
   to guess.
 - **`breakdown`** — decompose a compound statement and show, per section, how it
   was classified (BINARY truth vs ANALYSED) and which leaf handled it, with each
-  verdict — so the decomposition is verifiable, not opaque. (The agentic
-  `validate-smart` gives the live delegation-trace counterpart.)
+  verdict — so the decomposition is verifiable, not opaque. The `lips-smart` server
+  exposes an **escalating** `breakdown` that additionally resolves each free-NL
+  *deferred* section through `validate-smart`, inlining its delegation trace — one
+  call, deterministic where it can be and agentic where it must be.
 - **`solve`** — solve a Sokoban grid. Mode `auto` (default) returns the optimal
   play on tractable boards and falls back to a satisficing solution on large ones
   (a box-count precheck + cap-fallback); the result flags `optimal` and `mode`.
