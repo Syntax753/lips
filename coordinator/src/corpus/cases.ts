@@ -129,6 +129,23 @@ export const TIMELINE_CASES: Case[] = [
     source: "hand-verified",
     note: "co-stars link via shared films across years",
   },
+  {
+    // Transitive bridge: endpoints P0 and P3 never overlap in time, yet the
+    // laddered chain of overlapping relationships connects them. Only each
+    // consecutive pair must overlap — not the endpoints.
+    id: "tl-transitive-ladder",
+    domain: "timeline",
+    input: tl([
+      { id: "P0", intervals: [{ starttime: 30, endtime: 30, locationid: "met:E01" }] },
+      { id: "P1", intervals: [{ starttime: 30, endtime: 30, locationid: "met:E01" }, { starttime: 90, endtime: 90, locationid: "friends:E12" }] },
+      { id: "P2", intervals: [{ starttime: 90, endtime: 90, locationid: "friends:E12" }, { starttime: 150, endtime: 150, locationid: "married:E23" }] },
+      { id: "P3", intervals: [{ starttime: 150, endtime: 150, locationid: "married:E23" }] },
+    ]),
+    expect: { valid: true },
+    difficulty: "medium",
+    source: "hand-verified",
+    note: "non-overlapping endpoints bridged by a transitive relationship chain",
+  },
 ];
 
 /** All assertable cases, across domains. */
