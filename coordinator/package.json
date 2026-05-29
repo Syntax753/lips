@@ -6,7 +6,8 @@
   "description": "Claude Agent SDK coordinator + REPL that delegates boolean comparisons to short-lived per-comparator subagents backed by the Go MCP server.",
   "bin": {
     "lips": "./dist/repl.js",
-    "lips-mcp": "./dist/mcpServer.js"
+    "lips-mcp": "./dist/mcpServer.js",
+    "lips-mcp-smart": "./dist/mcpServerSmart.js"
   },
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
@@ -17,6 +18,8 @@
     "repl": "node dist/repl.js",
     "mcp": "node dist/mcpServer.js",
     "mcp:dev": "tsx src/mcpServer.ts",
+    "mcp:smart": "node dist/mcpServerSmart.js",
+    "mcp:smart:dev": "tsx src/mcpServerSmart.ts",
     "bench": "tsx src/corpus/bench.mts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"

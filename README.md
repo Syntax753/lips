@@ -137,10 +137,38 @@ It exposes four tools:
 - **`algebraic`** — solve a linear system end-to-end.
 
 This is the lower of two layers: the deterministic solver server is the
-dependable building block, and the **agentic coordinator** (classify → decompose
-NL → delegate → compose, the REPL above) is an optional layer that sits on top of
-it. A host can drive the leaf solvers itself, or hand a whole problem to the
-coordinator and watch it delegate.
+dependable building block, and the **agentic coordinator** is an optional layer
+on top.
+
+### Agentic server (`validate-smart`)
+
+A second, separate stdio server exposes the coordinator itself as one tool,
+`validate-smart`. It takes a free-form natural-language request, **decomposes** it,
+**delegates** each atomic step to a specialist subagent that calls a deterministic
+leaf above, and **composes** the answer — returning the result plus the full
+delegation trace.
+
+```sh
+cd coordinator && npm run build && npm run mcp:smart   # or register dist/mcpServerSmart.js
+```
+
+```json
+{
+  "mcpServers": {
+    "lips":       { "command": "node", "args": ["<repo>/coordinator/dist/mcpServer.js"] },
+    "lips-smart": { "command": "node", "args": ["<repo>/coordinator/dist/mcpServerSmart.js"] }
+  }
+}
+```
+
+It is deliberately a separate entrypoint: the deterministic `lips` server is
+auth-free and reproducible, while `lips-smart` runs a Claude Agent SDK session and
+so **needs Claude credentials** in its process (it reuses Claude Code's auth, or
+`ANTHROPIC_API_KEY`). Use `validate-smart` for the natural language the
+deterministic `validate` returns `kind:"unknown"` for — word problems, compound
+phrasings like *"is the larger of 3 and 8 over 5?"* — and the deterministic tools
+for typed inputs. A host can drive the leaf solvers itself, or hand the whole
+problem to `validate-smart` and watch it delegate.
 
 ### Example corpus & tuning bench
 
@@ -243,10 +271,18 @@ The pieces are arranged so the next phases drop in without reshaping the core:
    characters interact when co-located in overlapping time, and the player can
    switch between them. Validation = the co-location graph is connected (encounter
    everyone from anyone). Exposed as the `reachable` tool and behind `validate`.
-6. **Agentic wrapper** — expose the coordinator itself as a `validate-smart` MCP
-   tool, so a host can hand it free natural language and have it decompose,
-   delegate to the deterministic leaves, and compose — the agentic layer atop the
-   deterministic core.
-7. **More delegators & comparators** — more `cmp/` types (dates, versions, object
+6. **Agentic wrapper** *(landed)* — the coordinator is exposed as the
+   `validate-smart` MCP tool on a separate `lips-smart` server, so a host can hand
+   it free natural language and have it decompose, delegate to the deterministic
+   leaves, and compose. See **Agentic server** above.
+7. **Tiered grid solving + synthesizer** *(landed)* — `solve` auto-tiers
+   (optimal → satisficing fallback) and emits push-vector plans + analysis + a
+   colour movement view; `optimize` condenses any plan and proves optimality on
+   demand via a bounded re-search.
+8. **Open-timeline discovery** *(next)* — a `connect-people` agentic skill that,
+   given real people with no provided timeline, uses web search to gather
+   documented co-appearances (films, concerts) and life spans, assembles them into
+   intervals, and calls the deterministic `reachable` solver to verify the link.
+9. **More delegators & comparators** — more `cmp/` types (dates, versions, object
    comparison by field); quadratic/nonlinear solvers; MCP prompts for guided
    symbolic input; multi-step proofs.
