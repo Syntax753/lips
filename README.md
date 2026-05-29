@@ -120,6 +120,10 @@ It exposes four tools:
   `and`/`or` **chain** → a truth. Free natural language returns `kind:"unknown"` —
   that is the agentic coordinator's job to decompose, not the deterministic core's
   to guess.
+- **`breakdown`** — decompose a compound statement and show, per section, how it
+  was classified (BINARY truth vs ANALYSED) and which leaf handled it, with each
+  verdict — so the decomposition is verifiable, not opaque. (The agentic
+  `validate-smart` gives the live delegation-trace counterpart.)
 - **`solve`** — solve a Sokoban grid. Mode `auto` (default) returns the optimal
   play on tractable boards and falls back to a satisficing solution on large ones
   (a box-count precheck + cap-fallback); the result flags `optimal` and `mode`.

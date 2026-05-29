@@ -7,6 +7,7 @@ import type { PlanStep } from "./delegator/plan.js";
 import { solveSystem } from "./delegator/algebraic.js";
 import { solveTimeline } from "./delegator/timeline.js";
 import { validate } from "./solvers/validate.js";
+import { breakdown, renderBreakdown } from "./solvers/breakdown.js";
 import { DEFAULT_RULESET } from "./rules/index.js";
 
 /**
@@ -47,6 +48,20 @@ server.registerTool(
   async ({ input }) => {
     const r = validate(input);
     return text(`[${r.kind}] valid=${r.valid} — ${r.reason}\n${JSON.stringify(r)}`);
+  },
+);
+
+server.registerTool(
+  "breakdown",
+  {
+    title: "Show the per-section tool breakdown of a compound statement",
+    description:
+      "Decompose a compound statement into its sections and show, per section, how it was classified and which deterministic leaf analysed it — so you can VERIFY the decomposition: which parts are simple BINARY truths (comparators) vs which need ANALYSIS (algebra/grid/timeline), the tool each used, and its verdict. Splits on top-level and/or and composes boolean sections. Reliable for symbolic/structured clauses; free natural-language clauses classify as 'deferred' (the agentic validate-smart's job). Returns { sections:[{clause,kind,type,tool,valid,reason}], composition }.",
+    inputSchema: { input: z.string().describe("the compound statement to decompose and analyse") },
+  },
+  async ({ input }) => {
+    const b = breakdown(input);
+    return text(`${renderBreakdown(b)}\n\n${JSON.stringify(b)}`);
   },
 );
 
