@@ -279,10 +279,13 @@ The pieces are arranged so the next phases drop in without reshaping the core:
    (optimal → satisficing fallback) and emits push-vector plans + analysis + a
    colour movement view; `optimize` condenses any plan and proves optimality on
    demand via a bounded re-search.
-8. **Open-timeline discovery** *(next)* — a `connect-people` agentic skill that,
-   given real people with no provided timeline, uses web search to gather
-   documented co-appearances (films, concerts) and life spans, assembles them into
-   intervals, and calls the deterministic `reachable` solver to verify the link.
+8. **Open-timeline discovery** *(landed)* — the `connect-people` skill
+   (`.claude/skills/connect-people/`): given real people with no provided timeline,
+   it web-searches documented co-appearances (films, concerts) — `locationid` = the
+   shared work, time = its year — adversarially verifies each link, then calls the
+   deterministic solver (`reachable`, or `npm run connect -- <file.json>`) to prove
+   connectivity and return the encounter chain. Search lives in the skill; the
+   verdict stays deterministic.
 9. **More delegators & comparators** — more `cmp/` types (dates, versions, object
    comparison by field); quadratic/nonlinear solvers; MCP prompts for guided
    symbolic input; multi-step proofs.

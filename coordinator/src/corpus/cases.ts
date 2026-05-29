@@ -109,6 +109,24 @@ export const TIMELINE_CASES: Case[] = [
     source: "hand-verified",
     note: "same location, no time overlap -> no encounter",
   },
+  {
+    // The open-timeline framing: locationid = a shared work, time = its year.
+    // A "six degrees" chain — the connect-people skill assembles these from search.
+    id: "tl-co-appearance-chain",
+    domain: "timeline",
+    input: tl([
+      { id: "Travolta", intervals: [{ starttime: 1994, endtime: 1994, locationid: "Pulp Fiction" }] },
+      { id: "Willis", intervals: [
+        { starttime: 1994, endtime: 1994, locationid: "Pulp Fiction" },
+        { starttime: 1995, endtime: 1995, locationid: "Twelve Monkeys" },
+      ] },
+      { id: "Pitt", intervals: [{ starttime: 1995, endtime: 1995, locationid: "Twelve Monkeys" }] },
+    ]),
+    expect: { valid: true },
+    difficulty: "easy",
+    source: "hand-verified",
+    note: "co-stars link via shared films across years",
+  },
 ];
 
 /** All assertable cases, across domains. */

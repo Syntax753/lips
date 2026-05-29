@@ -21,6 +21,7 @@
     "mcp:smart": "node dist/mcpServerSmart.js",
     "mcp:smart:dev": "tsx src/mcpServerSmart.ts",
     "bench": "tsx src/corpus/bench.mts",
+    "connect": "tsx src/cli/connect.mts",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
