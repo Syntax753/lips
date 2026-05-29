@@ -138,18 +138,29 @@ coordinator and watch it delegate.
 Solvable-input examples across every domain live in `src/corpus/cases.ts`, each
 with its expected verdict. The runner feeds every case through the one
 `validate` entry, so the corpus is the end-to-end test of classify → route →
-solve:
+solve. For Sokoban specifically there is a **difficulty-graded harness**: the
+vendored, public-domain **Microban** set (155 puzzles by David W. Skinner,
+`src/corpus/sokoban/microban.txt`), ordered easy → hard, loaded and converted to
+the lips glyph set by `microban.ts`.
 
 ```sh
-npm test                  # includes the corpus suite (src/corpus/corpus.test.ts)
-npm run bench             # run the HARD boards under every search mode, print metrics
-LIPS_MAX_STATES=300000 npm run bench
+npm test                       # corpus suite + Microban loader/prefix smoke
+npm run bench                  # the HARD boards under every search mode
+npm run bench -- microban      # the full Microban difficulty curve (where it falls off)
+LIPS_MAX_STATES=100000 npm run bench -- microban
 ```
 
 `bench` is for tuning, not pass/fail: it reports search effort
-(explored / pushed / pruned / ms) on large boards so a heuristic change can be
-measured. (The headline 19×17 board is currently an open tuning target — no mode
-solves it within default caps yet.)
+(explored / pushed / pruned / ms) so a heuristic change can be measured, and the
+`microban` curve shows exactly which levels the solver clears and where it stops.
+
+> **Known solver bug (found by this harness).** The tunnel-macro push
+> optimization is unsound: it slides a box past intermediate rest cells that the
+> player needs, so it drops reachable states and reports **35/155** Microban
+> levels (including easy ones like #10, #11, #14) as *unsolvable*. Disabling the
+> macro makes every one solve. Those levels are skipped — with a reason — in the
+> test until the macro is fixed or removed; the bench lists them as tuning
+> targets. (The headline 19×17 board is a separate open target.)
 
 ## Using the REPL
 
