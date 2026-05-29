@@ -113,8 +113,12 @@ function compose(sections: Section[]): string {
     }
     return `boolean composition → ${acc}`;
   }
-  if (sections.some((s) => s.type === "deferred" && s.valid === null)) {
+  // Unresolved only if a deferred section was neither decided nor escalated.
+  if (sections.some((s) => s.type === "deferred" && s.valid === null && !s.agentic)) {
     return "compound with unresolved section(s) — escalate to the agentic layer";
+  }
+  if (sections.some((s) => s.agentic)) {
+    return "mixed compound → deterministic sections + agentic-resolved section(s), each answered above";
   }
   if (sections.length === 1) return `single ${sections[0].type} section → ${sections[0].valid}`;
   return "mixed-domain compound → each section answered independently above";
