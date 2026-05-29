@@ -114,7 +114,28 @@ function evalToNumber(side: string, values: Record<string, number>): number {
   return e.constant;
 }
 
+/**
+ * Public entry — never throws. A parse failure (e.g. a nonlinear `^` term, which
+ * the linear delegator does not support) becomes a clean not-solvable result
+ * instead of an exception, so callers like `validate` degrade gracefully.
+ */
 export function solveSystem(equations: string[]): AlgebraicResult {
+  try {
+    return solveSystemUnsafe(equations);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      preflight: { ok: false, equationCount: equations.length, unknownCount: 0, unknowns: [], connected: false, determined: false, reason: msg },
+      solution: {},
+      comparables: [],
+      trace: [],
+      reason: `not solvable: ${msg} — the algebraic delegator solves LINEAR systems only (nonlinear/quadratic is out of scope)`,
+    };
+  }
+}
+
+function solveSystemUnsafe(equations: string[]): AlgebraicResult {
   const pf = preflight(equations);
   const trace: OpTrace[] = [
     {
