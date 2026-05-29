@@ -2,7 +2,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { solve, bestMove } from "./delegator/solve.js";
+import { solve, bestMove, optimize, renderResult } from "./delegator/solve.js";
+import type { PlanStep } from "./delegator/plan.js";
 import { solveSystem } from "./delegator/algebraic.js";
 import { solveTimeline } from "./delegator/timeline.js";
 import { validate } from "./solvers/validate.js";
@@ -62,12 +63,35 @@ server.registerTool(
   },
   async ({ grid, ruleset }) => {
     const r = solve(grid, ruleset ?? DEFAULT_RULESET);
-    const summary = r.solvable
-      ? `solvable in ${r.moves} move(s) / ${r.pushes} push(es) (explored ${r.explored}, pruned ${r.pruned})`
+    const view = r.solvable
+      ? renderResult(grid, r, !process.env.NO_COLOR) // colourised movement view (NO_COLOR=1 to disable)
       : `not solvable — ${r.reason} (explored ${r.explored}, pruned ${r.pruned})`;
-    // Drop the (potentially large) per-step path from the payload; keep the win grid.
+    // Drop the (potentially large) per-step grid path; the plan vectors + analysis
+    // are the compact carry-forward an `optimize` call refines.
     const { path: _path, ...rest } = r;
-    return text(`${summary}\n${JSON.stringify(rest)}`);
+    return text(`${view}\n${JSON.stringify(rest)}`);
+  },
+);
+
+server.registerTool(
+  "optimize",
+  {
+    title: "Condense / prove-optimal a solver plan",
+    description:
+      "Refine a solver's push-VECTOR plan WITHOUT re-analysing the grid. Always local-condenses (shortest player walks between pushes, tightening a satisficing plan); with proven=true it runs a bounded optimal re-search seeded by the plan's cost, returning a strictly shorter plan if one exists or proving the plan is already optimal. Input: the grid and the `plan` array from a solve result. Returns { valid, moves, pushes, optimal, improvedFromMoves, plan, winning }.",
+    inputSchema: {
+      grid: z.string().describe("the start state as an ASCII grid"),
+      plan: z.array(z.unknown()).describe("the solver's push-vector plan (the `plan` field of a solve result)"),
+      proven: z.boolean().optional().describe("also prove/achieve the optimum via bounded re-search (default false)"),
+      ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
+    },
+  },
+  async ({ grid, plan, proven, ruleset }) => {
+    const r = optimize(grid, plan as PlanStep[], { proven, ruleset });
+    const summary = r.valid
+      ? `${r.optimal ? "optimal" : "condensed"}: ${r.moves} move(s) / ${r.pushes} push(es)${r.improvedFromMoves !== null ? ` (was ${r.improvedFromMoves})` : ""} — ${r.reason}`
+      : `cannot optimize — ${r.reason}`;
+    return text(`${summary}\n${JSON.stringify(r)}`);
   },
 );
 

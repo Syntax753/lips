@@ -120,7 +120,16 @@ It exposes four tools:
   `and`/`or` **chain** → a truth. Free natural language returns `kind:"unknown"` —
   that is the agentic coordinator's job to decompose, not the deterministic core's
   to guess.
-- **`solve`** — solve a Sokoban grid for the minimum moves/pushes.
+- **`solve`** — solve a Sokoban grid. Mode `auto` (default) returns the optimal
+  play on tractable boards and falls back to a satisficing solution on large ones
+  (a box-count precheck + cap-fallback); the result flags `optimal` and `mode`.
+  Output carries the solution as push **vectors** (`plan`), the **analysis**
+  (box→goal assignment + lower bound) that seeds a later `optimize`, and a
+  colourised ASCII movement view (`NO_COLOR=1` to disable).
+- **`optimize`** — refine a `solve` plan *without re-analysing the grid*: always
+  local-condenses (shortest player walks between pushes), and with `proven:true`
+  runs a bounded optimal re-search seeded by the plan's cost — returning a shorter
+  plan or proving the plan already optimal.
 - **`bestmove`** — the single best next step toward the win for a grid.
 - **`reachable`** — given characters as lists of `{ starttime, endtime, locationid }`
   intervals, decide whether a player who switches between co-located characters can

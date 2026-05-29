@@ -26,7 +26,6 @@ if (arg === "microban") {
 
 /** Run every Microban level under the OPTIMAL solver and print the curve. */
 function benchMicroban(): void {
-  delete process.env.LIPS_SEARCH; // force optimal mode
   const levels = loadMicroban();
   console.log(`Microban — ${levels.length} levels, optimal mode, cap=${process.env.LIPS_MAX_STATES ?? "1500000"}\n`);
   console.log("  #   boxes  cells   solvable  moves  pushes   explored      ms");
@@ -37,7 +36,7 @@ function benchMicroban(): void {
   const misses: number[] = [];
   for (const lv of levels) {
     const t0 = Date.now();
-    const r = solve(lv.grid);
+    const r = solve(lv.grid, undefined, "optimal");
     const ms = Date.now() - t0;
     totalMs += ms;
     if (r.solvable) solved++;
@@ -73,9 +72,8 @@ function benchHard(onlyId?: string): void {
     console.log(`\n=== ${c.id} (${c.difficulty}) — boxes=${boxes} goals=${goals} — ${c.source} ===`);
     console.log("mode        ok    solvable  moves  pushes   explored    pushed    pruned     ms");
     for (const mode of MODES) {
-      process.env.LIPS_SEARCH = mode;
       const t0 = Date.now();
-      const r = solve(c.input);
+      const r = solve(c.input, undefined, mode);
       const ms = Date.now() - t0;
       console.log(
         `${mode.padEnd(10)}  ${pad(String(r.ok), 4)}  ${pad(String(r.solvable), 8)}  ` +

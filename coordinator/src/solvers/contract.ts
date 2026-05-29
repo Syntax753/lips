@@ -44,15 +44,18 @@ export function metrics(entries: Record<string, number | null | undefined>): Rec
   return out;
 }
 
-/** Adapt the grid solver's native result into the uniform verdict. */
+/** Adapt the grid solver's native result into the uniform verdict. The witness
+ *  carries the winning grid plus the push-VECTOR plan and analysis — the
+ *  reference vectors a later `optimize` call refines without re-analysing. */
 export function fromGrid(r: SolveResult): Verdict {
   return {
     kind: "grid",
     valid: r.solvable,
-    witness: r.solvable ? r.winning : null,
+    witness: r.solvable ? { winning: r.winning, optimal: r.optimal, mode: r.mode, plan: r.plan, analysis: r.analysis } : null,
     metrics: metrics({
       moves: r.moves,
       pushes: r.pushes,
+      lowerBound: r.analysis?.lowerBound,
       explored: r.explored,
       pushed: r.pushed,
       pruned: r.pruned,

@@ -46,7 +46,10 @@ test("validate(grid) solves and reports the uniform verdict", () => {
   assert.equal(v.valid, true);
   assert.equal(v.metrics.moves, 1);
   assert.equal(v.metrics.pushes, 1);
-  assert.equal(typeof v.witness, "string");
+  // witness now carries the winning grid + the push-vector plan + analysis.
+  const w = v.witness as { winning: string; plan: unknown[] };
+  assert.equal(typeof w.winning, "string");
+  assert.ok(Array.isArray(w.plan));
 });
 
 test("validate(algebraic) solves the system", () => {

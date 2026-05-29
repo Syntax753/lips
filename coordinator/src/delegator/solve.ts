@@ -3,6 +3,7 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { getRuleSet, DEFAULT_RULESET } from "../rules/index.js";
 import type { RuleSet } from "../rules/index.js";
 import { logVerbose, getLogLevel } from "../logger.js";
+import { buildVectors, renderSolution, type PlanStep, type GridAnalysis, type Dir } from "./plan.js";
 
 /**
  * Deterministic Sokoban resolver. Instead of searching every player STEP, it
@@ -31,17 +32,29 @@ import { logVerbose, getLogLevel } from "../logger.js";
  * finds, so `moves` is no longer guaranteed minimal.
  */
 
+export type SearchMode = "auto" | "optimal" | "rooms" | "decompose";
+
 export type SolveResult = {
   ok: boolean;
   solvable: boolean;
   ruleset: string;
-  moves: number | null; // minimum player steps (null if unsolvable)
+  /** True only when `moves` is the proven minimum (optimal search succeeded). */
+  optimal: boolean;
+  /** The search that produced this ("optimal" | "rooms" | "decompose"). */
+  mode: string;
+  moves: number | null; // player steps (the MINIMUM when optimal; otherwise just a solution's length)
   pushes: number | null; // box pushes in the solution
   explored: number; // equivalence classes dequeued
   pushed: number; // classes added to the frontier
   pruned: number; // classes skipped (already reached at <= cost)
   path: string[] | null; // start .. winning grid, per player step (capped)
   winning: string | null;
+  /** Solution as push VECTORS (the reference vectors an optimizer condenses). */
+  plan: PlanStep[] | null;
+  /** Player cells per step (route), for rendering — capped. */
+  route: number[] | null;
+  /** Vectorial heuristics (assignment, lower bound) to seed a further optimize call. */
+  analysis: GridAnalysis | null;
   reason: string;
 };
 
@@ -583,29 +596,34 @@ function coverGoal(
 }
 
 /** Replay an ordered push list from a start state into a per-step grid path. */
-function expandPath(p: Parsed, startBoxes: Set<number>, startPlayer: number, pushes: Push[]): string[] {
+function expandPath(p: Parsed, startBoxes: Set<number>, startPlayer: number, pushes: Push[]): { path: string[]; route: number[] } {
   const lineStep = (from: number, to: number): number => {
     const fr = Math.floor(from / p.w);
     const tr = Math.floor(to / p.w);
     return fr === tr ? Math.sign((to % p.w) - (from % p.w)) : Math.sign(tr - fr) * p.w;
   };
   const path = [render(p, startBoxes, startPlayer)];
+  const route: number[] = [startPlayer];
   const boxes = new Set(startBoxes);
   let player = startPlayer;
   for (const { box, to } of pushes) {
     const d = lineStep(box, to);
     const { prev } = walkBFS(p, boxes, player);
     const walk = walkSteps(prev, box - d);
-    for (let j = 1; j < walk.length; j++) path.push(render(p, boxes, walk[j]));
+    for (let j = 1; j < walk.length; j++) {
+      path.push(render(p, boxes, walk[j]));
+      route.push(walk[j]);
+    }
     for (let bpos = box; bpos !== to; ) {
       boxes.delete(bpos);
       bpos += d;
       boxes.add(bpos);
       path.push(render(p, boxes, bpos - d));
+      route.push(bpos - d);
     }
     player = to - d;
   }
-  return path;
+  return { path, route };
 }
 
 /**
@@ -629,6 +647,8 @@ function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): So
     ok: true,
     solvable: false,
     ruleset: rs.name,
+    optimal: false,
+    mode: "decompose",
     moves: null,
     pushes: null,
     explored: totalExplored,
@@ -636,6 +656,9 @@ function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): So
     pruned: 0,
     path: null,
     winning: null,
+    plan: null,
+    route: null,
+    analysis: null,
     reason: `decomposition stuck: ${n} goal(s) unreachable given the placed boxes (explored ${totalExplored})`,
   });
 
@@ -662,7 +685,7 @@ function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): So
   }
 
   // All box goals covered. Recompute the end state, then walk to the player goal if any.
-  const path = expandPath(p, p.boxes, p.player, allPushes);
+  const { path, route } = expandPath(p, p.boxes, p.player, allPushes);
   const finalBoxes = new Set(p.boxes);
   let endPlayer = p.player;
   for (const { box, to } of allPushes) {
@@ -675,15 +698,21 @@ function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): So
     const { prev } = walkBFS(p, finalBoxes, endPlayer);
     if (prev.has(p.playerGoal)) {
       const walk = walkSteps(prev, p.playerGoal);
-      for (let j = 1; j < walk.length; j++) path.push(render(p, finalBoxes, walk[j]));
+      for (let j = 1; j < walk.length; j++) {
+        path.push(render(p, finalBoxes, walk[j]));
+        route.push(walk[j]);
+      }
     }
   }
   const winning = path[path.length - 1];
   const cappedPath = path.length <= MAX_PATH ? path : [...path.slice(0, MAX_PATH - 1), winning];
+  const cappedRoute = route.length <= MAX_PATH ? route : route.slice(0, MAX_PATH);
   return {
     ok: true,
     solvable: true,
     ruleset: rs.name,
+    optimal: false,
+    mode: "decompose",
     moves: path.length - 1,
     pushes: allPushes.length,
     explored: totalExplored,
@@ -691,16 +720,75 @@ function solveByDecomposition(p: Parsed, rs: RuleSet, overallBudget: number): So
     pruned: 0,
     path: cappedPath,
     winning,
+    plan: buildVectors(allPushes, p.w, p.boxGoals),
+    route: cappedRoute,
+    analysis: buildAnalysis(p, goalDistances(p), allPushes),
     reason: "goal reached (decomposition — solution found, not necessarily minimal)",
   };
 }
 
-export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): SolveResult {
+/** Lower bound + box→goal assignment: the vectorial heuristics an optimizer reuses. */
+function buildAnalysis(p: Parsed, goalDist: number[] | null, pushes: { box: number; to: number }[]): GridAnalysis {
+  const boxes = [...p.boxes];
+  const goals = [...p.boxGoals];
+  const lb = (cell: number): number => (goalDist && Number.isFinite(goalDist[cell]) ? goalDist[cell] : 0);
+  const lowerBound = boxes.reduce((s, b) => s + lb(b), 0);
+  // Trace each start box's identity through the pushes to the goal it ends on.
+  const origin = new Map<number, number>();
+  for (const b of p.boxes) origin.set(b, b);
+  for (const { box, to } of pushes) {
+    const o = origin.get(box) ?? box;
+    origin.delete(box);
+    origin.set(to, o);
+  }
+  const assignment = [...p.boxGoals]
+    .filter((g) => origin.has(g))
+    .map((g) => ({ box: origin.get(g)!, goal: g, lb: lb(origin.get(g)!) }));
+  return { w: p.w, h: p.h, boxes, goals, lowerBound, assignment };
+}
+
+const AUTO_BOX_LIMIT = Number(process.env.LIPS_AUTO_BOX_LIMIT ?? 12);
+
+/**
+ * Public entry. mode "auto" (default): a cheap box-count precheck sends obviously
+ * huge boards straight to satisficing; otherwise it runs the optimal search and
+ * falls back to satisficing only if that hits the state cap. Explicit modes
+ * ("optimal" | "rooms" | "decompose") bypass the dispatch.
+ */
+export function solve(grid: string, rulesetName: string = DEFAULT_RULESET, modeArg?: SearchMode, upperBound?: number): SolveResult {
+  const raw = (modeArg ?? (process.env.LIPS_SEARCH as SearchMode | undefined) ?? "auto").toLowerCase();
+  const reqMode: SearchMode = raw === "optimal" || raw === "rooms" || raw === "decompose" ? raw : "auto";
+  if (reqMode === "auto") return solveAuto(grid, rulesetName);
+  return solveOnce(grid, rulesetName, reqMode, upperBound);
+}
+
+function solveAuto(grid: string, rulesetName: string): SolveResult {
+  const boxCount = (grid.match(/[+*]/g) ?? []).length;
+  if (boxCount > AUTO_BOX_LIMIT) return runSatisficing(grid, rulesetName); // too big to attempt optimal
+  const opt = solveOnce(grid, rulesetName, "optimal");
+  if (opt.solvable) return opt; // optimal solution found — keep it
+  const cappedOut = opt.ok && opt.reason.includes("search limit reached");
+  if (!cappedOut) return opt; // genuinely unsolvable / invalid — trust the optimal verdict
+  const fb = runSatisficing(grid, rulesetName);
+  return fb.solvable ? fb : opt; // prefer a solution; else report the optimal cap-out
+}
+
+/** Satisficing fallback: decomposition first (strongest on box-goal boards), then rooms. */
+function runSatisficing(grid: string, rulesetName: string): SolveResult {
+  const d = solveOnce(grid, rulesetName, "decompose");
+  if (d.solvable) return d;
+  const r = solveOnce(grid, rulesetName, "rooms");
+  return r.solvable ? r : d;
+}
+
+function solveOnce(grid: string, rulesetName: string, reqMode: "optimal" | "rooms" | "decompose", upperBound?: number): SolveResult {
   const rs = getRuleSet(rulesetName);
   const fail = (reason: string, ok = true, explored = 0, pushed = 0, pruned = 0): SolveResult => ({
     ok,
     solvable: false,
     ruleset: rs.name,
+    optimal: false,
+    mode: reqMode,
     moves: null,
     pushes: null,
     explored,
@@ -708,6 +796,9 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
     pruned,
     path: null,
     winning: null,
+    plan: null,
+    route: null,
+    analysis: null,
     reason,
   });
 
@@ -725,7 +816,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   // Already solved?
   if (allCovered(p, p.boxes) && (p.playerGoal === null || p.player === p.playerGoal)) {
     const g = render(p, p.boxes, p.player);
-    return { ok: true, solvable: true, ruleset: rs.name, moves: 0, pushes: 0, explored: 0, pushed: 1, pruned: 0, path: [g], winning: g, reason: "goal already met" };
+    return { ok: true, solvable: true, ruleset: rs.name, optimal: true, mode: reqMode, moves: 0, pushes: 0, explored: 0, pushed: 1, pruned: 0, path: [g], winning: g, plan: [], route: [p.player], analysis: buildAnalysis(p, null, []), reason: "goal already met" };
   }
 
   // One map serves both dedup and reconstruction: key -> cheapest cost + how we got here.
@@ -755,9 +846,9 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   const h0 = hOf(p.boxes);
   if (h0 === Infinity) return fail("a box starts where it can never reach any goal — unsolvable", true, 0, 0, 0);
 
-  // Decomposition satisficing mode (LIPS_SEARCH=decompose): fill goals one at a
-  // time, locking placed boxes. Only meaningful in box-goal mode (goalDist set).
-  if ((process.env.LIPS_SEARCH ?? "").toLowerCase() === "decompose" && goalDist !== null) {
+  // Decomposition satisficing mode: fill goals one at a time, locking placed
+  // boxes. Only meaningful in box-goal mode (goalDist set).
+  if (reqMode === "decompose" && goalDist !== null) {
     return solveByDecomposition(p, rs, MAX_EXPLORED);
   }
 
@@ -766,7 +857,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   // solution on boards too large for the optimal search, but `moves` is no
   // longer guaranteed minimal. Only meaningful when the box-goal heuristic is
   // active (so goal rooms are defined); otherwise we stay optimal.
-  const useRooms = (process.env.LIPS_SEARCH ?? "").toLowerCase() === "rooms" && goalDist !== null;
+  const useRooms = reqMode === "rooms" && goalDist !== null;
   const rooms = useRooms ? analyzeRooms(p) : null;
   // A box is "not home" if it sits off a goal and outside any goal-bearing room.
   const notHome = (cell: number): number => {
@@ -794,7 +885,10 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   let pruned = 0;
   let logged = 0;
 
-  let bestWin = Infinity;
+  // Seed the best-known finish with a caller-supplied upper bound (the cost of a
+  // known satisficing plan): the search then prunes every state with f ≥ bound,
+  // so a bounded re-search is far cheaper than a cold optimal solve.
+  let bestWin = upperBound ?? Infinity;
   let winFrom: { key: string; walkToGoal: number[] } | null = null;
 
   while (heap.size > 0) {
@@ -902,8 +996,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
   for (let k: string | null = winFrom.key; k !== null; k = reached.get(k)!.parent) keyChain.push(k);
   keyChain.reverse();
 
-  // A push moves box viaBox -> viaTo in a straight line (one cell, or several at
-  // once for a tunnel macro); this is its unit step delta.
+  // A push moves box viaBox -> viaTo one cell; this is its unit step delta.
   const lineStep = (from: number, to: number): number => {
     const fr = Math.floor(from / p.w);
     const tr = Math.floor(to / p.w);
@@ -921,6 +1014,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
 
   // Expand each push into single player steps: walk to the pushing side, then push the box cell by cell.
   const path: string[] = [render(p, states[0].boxes, states[0].player)];
+  const route: number[] = [states[0].player]; // player cell per step (for rendering)
   for (let i = 1; i < keyChain.length; i++) {
     const before = states[i - 1];
     const e = reached.get(keyChain[i])!;
@@ -928,37 +1022,56 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
     const pushFrom = e.viaBox - d; // cell the player stands on to start pushing
     const { prev } = walkBFS(p, before.boxes, before.player);
     const walk = walkSteps(prev, pushFrom);
-    for (let j = 1; j < walk.length; j++) path.push(render(p, before.boxes, walk[j]));
+    for (let j = 1; j < walk.length; j++) {
+      path.push(render(p, before.boxes, walk[j]));
+      route.push(walk[j]);
+    }
     const live = new Set(before.boxes);
     for (let box = e.viaBox; box !== e.viaTo; ) {
       live.delete(box);
       box += d;
       live.add(box);
       path.push(render(p, live, box - d)); // one push step, player following behind
+      route.push(box - d);
     }
   }
   // Final walk to the player goal (if any), ending on it.
   if (winFrom.walkToGoal.length > 1) {
     const last = states[states.length - 1];
-    for (let j = 1; j < winFrom.walkToGoal.length; j++) path.push(render(p, last.boxes, winFrom.walkToGoal[j]));
+    for (let j = 1; j < winFrom.walkToGoal.length; j++) {
+      path.push(render(p, last.boxes, winFrom.walkToGoal[j]));
+      route.push(winFrom.walkToGoal[j]);
+    }
   }
 
   const moves = path.length - 1;
   const winning = path[path.length - 1];
-  // Cap the returned path so the tool result stays small (full play is logged).
+  // Cap the returned path/route so the tool result stays small (full play is logged).
   const cappedPath = path.length <= MAX_PATH ? path : [...path.slice(0, MAX_PATH - 1), winning];
+  const cappedRoute = route.length <= MAX_PATH ? route : route.slice(0, MAX_PATH);
+
+  // The solution as push vectors + the heuristics that seed a further optimize call.
+  const pushes = keyChain.slice(1).map((k) => {
+    const e = reached.get(k)!;
+    return { box: e.viaBox, to: e.viaTo };
+  });
 
   return {
     ok: true,
     solvable: true,
     ruleset: rs.name,
+    optimal: !useRooms, // rooms is greedy/satisficing; plain A* is the minimum
+    mode: useRooms ? "rooms" : "optimal",
     moves,
-    pushes: keyChain.length - 1,
+    pushes: pushes.length,
     explored,
     pushed,
     pruned,
     path: cappedPath,
     winning,
+    plan: buildVectors(pushes, p.w, p.boxGoals),
+    route: cappedRoute,
+    analysis: buildAnalysis(p, goalDist, pushes),
     reason: useRooms ? "goal reached (room-guided search — solution found, not necessarily minimal)" : "goal reached",
   };
 }
@@ -1035,12 +1148,144 @@ export const solveTool = tool(
   },
   async (args) => {
     const r = solve(args.grid, args.ruleset ?? DEFAULT_RULESET);
-    const text = r.solvable
-      ? `solvable in ${r.moves} move(s) / ${r.pushes} push(es) (explored ${r.explored} classes, pruned ${r.pruned})`
-      : `not solvable — ${r.reason} (explored ${r.explored} classes, pruned ${r.pruned})`;
+    const text = r.solvable ? renderResult(args.grid, r) : `not solvable — ${r.reason} (explored ${r.explored} classes, pruned ${r.pruned})`;
     // Omit the (potentially large) per-step `path` from the model-facing payload —
-    // the full play streams to the terminal log instead. Keep just the win grid.
+    // the plan vectors + analysis are the compact carry-forward; the win grid stays.
     const { path: _path, ...summary } = r;
     return { content: [{ type: "text", text }], structuredContent: summary };
+  },
+);
+
+/** A `Dir`'s row-major delta for a board of width `w`. */
+const DIR_DELTA = (dir: Dir, w: number): number => (dir === "U" ? -w : dir === "D" ? w : dir === "L" ? -1 : 1);
+
+/** Render a solved result's colour ASCII view (auto colour by TTY / NO_COLOR). */
+export function renderResult(grid: string, r: SolveResult, color?: boolean): string {
+  if (!r.solvable || !r.plan || !r.route || !r.analysis || r.winning === null || r.moves === null || r.pushes === null) {
+    return `not solvable — ${r.reason}`;
+  }
+  const on = color ?? (process.stdout.isTTY === true && !process.env.NO_COLOR);
+  return renderSolution(grid, r.winning, r.plan, r.route, r.analysis, { moves: r.moves, pushes: r.pushes, optimal: r.optimal, mode: r.mode }, on);
+}
+
+export type OptimizeResult = {
+  ok: boolean;
+  valid: boolean; // the plan actually replays to a win on this grid
+  ruleset: string;
+  moves: number | null; // total player steps after condensing
+  pushes: number | null;
+  optimal: boolean; // proven minimum (only set true when the bounded re-search ran to completion)
+  improvedFromMoves: number | null; // the move count before optimizing, when it was reduced
+  plan: PlanStep[] | null;
+  route: number[] | null;
+  winning: string | null;
+  reason: string;
+};
+
+/**
+ * Replay a push-vector plan from the start, taking the SHORTEST player walk to
+ * each pushing position — the local-condense step. The push sequence is fixed;
+ * only the player's walking is minimized, so `moves` is ≤ the plan's original
+ * length (a satisficing plan that wandered gets tightened for free). Validates
+ * each push is legal so a bad plan is reported, not silently mis-rendered.
+ */
+function replayPlan(
+  grid: string,
+  plan: PlanStep[],
+  rs: RuleSet,
+): { ok: boolean; valid: boolean; moves: number; pushes: number; route: number[]; winning: string; reason: string } {
+  const p = parse(grid, rs);
+  if ("error" in p) return { ok: false, valid: false, moves: 0, pushes: 0, route: [], winning: grid, reason: p.error };
+  const bad = (reason: string): { ok: boolean; valid: boolean; moves: number; pushes: number; route: number[]; winning: string; reason: string } => ({ ok: true, valid: false, moves: 0, pushes: 0, route: [], winning: grid, reason });
+
+  const boxes = new Set(p.boxes);
+  let player = p.player;
+  const route: number[] = [player];
+  let moves = 0;
+  let pushes = 0;
+  for (const v of plan) {
+    const d = DIR_DELTA(v.dir, p.w);
+    let box = v.box;
+    for (let k = 0; k < v.len; k++) {
+      if (!boxes.has(box)) return bad(`plan invalid: no box at (${Math.floor(box / p.w)},${box % p.w})`);
+      const ahead = box + d;
+      const pushFrom = box - d;
+      if (p.walls.has(ahead) || boxes.has(ahead)) return bad("plan invalid: a push is blocked");
+      const { prev, dist } = walkBFS(p, boxes, player);
+      if (!dist.has(pushFrom)) return bad("plan invalid: player cannot reach a pushing side");
+      const walk = walkSteps(prev, pushFrom);
+      for (let j = 1; j < walk.length; j++) {
+        route.push(walk[j]);
+        moves++;
+      }
+      boxes.delete(box);
+      boxes.add(ahead);
+      player = box; // player follows into the box's old cell
+      route.push(player);
+      moves++;
+      pushes++;
+      box = ahead;
+    }
+  }
+  if (p.playerGoal !== null && player !== p.playerGoal) {
+    const { prev, dist } = walkBFS(p, boxes, player);
+    if (dist.has(p.playerGoal)) {
+      const walk = walkSteps(prev, p.playerGoal);
+      for (let j = 1; j < walk.length; j++) {
+        route.push(walk[j]);
+        moves++;
+      }
+      player = p.playerGoal;
+    }
+  }
+  const valid = allCovered(p, boxes) && (p.playerGoal === null || player === p.playerGoal);
+  return { ok: true, valid, moves, pushes, route, winning: render(p, boxes, player), reason: valid ? "plan replays to a win" : "plan does not reach the goal" };
+}
+
+/**
+ * The synthesizer/optimizer. Given a grid and a solver's push-VECTOR plan (no
+ * re-analysis of the grid required), always LOCAL-CONDENSE (shortest walks). If
+ * `proven`, additionally run a bounded optimal A* seeded by the condensed cost as
+ * an upper bound: it returns a strictly cheaper plan if one exists, otherwise it
+ * proves the condensed plan is already optimal — far cheaper than a cold solve
+ * because the known cost prunes the search hard.
+ */
+export function optimize(grid: string, plan: PlanStep[], opts: { proven?: boolean; ruleset?: string } = {}): OptimizeResult {
+  const rulesetName = opts.ruleset ?? DEFAULT_RULESET;
+  const rs = getRuleSet(rulesetName);
+  const c = replayPlan(grid, plan, rs);
+  if (!c.ok || !c.valid) {
+    return { ok: c.ok, valid: false, ruleset: rs.name, moves: null, pushes: null, optimal: false, improvedFromMoves: null, plan: null, route: null, winning: c.winning, reason: c.reason };
+  }
+  const route = c.route.length <= MAX_PATH ? c.route : c.route.slice(0, MAX_PATH);
+  const condensed: OptimizeResult = { ok: true, valid: true, ruleset: rs.name, moves: c.moves, pushes: c.pushes, optimal: false, improvedFromMoves: null, plan, route, winning: c.winning, reason: "locally condensed (shortest walks between pushes)" };
+  if (!opts.proven) return condensed;
+
+  // Proven-optimal: bounded optimal re-search using the condensed cost as the upper bound.
+  const bounded = solve(grid, rulesetName, "optimal", c.moves);
+  if (bounded.solvable && (bounded.moves ?? Infinity) < c.moves) {
+    return { ok: true, valid: true, ruleset: rs.name, moves: bounded.moves, pushes: bounded.pushes, optimal: true, improvedFromMoves: c.moves, plan: bounded.plan, route: bounded.route, winning: bounded.winning, reason: `proven optimal: bounded re-search improved ${c.moves} → ${bounded.moves} moves` };
+  }
+  if (bounded.ok && bounded.reason.includes("search limit")) {
+    return { ...condensed, reason: "locally condensed; optimality NOT proven (bounded re-search hit the state cap)" };
+  }
+  return { ...condensed, optimal: true, reason: "proven optimal: no cheaper solution exists within the bound" };
+}
+
+export const optimizeTool = tool(
+  "optimize",
+  "Refine a solver's push-VECTOR plan WITHOUT re-analysing the grid. Always local-condenses (takes the shortest player walk between pushes, tightening a satisficing plan); with proven=true it also runs a bounded optimal re-search seeded by the plan's cost, returning a strictly shorter plan if one exists or proving the plan is already optimal. Input: the grid plus the `plan` (and optional `analysis`) from a solve result. Returns { valid, moves, pushes, optimal, improvedFromMoves, plan, winning }.",
+  {
+    grid: z.string().describe("the start state as an ASCII grid"),
+    plan: z.array(z.unknown()).describe("the solver's push-vector plan (the `plan` field of a solve result)"),
+    proven: z.boolean().optional().describe("also prove/achieve the optimum via bounded re-search (default false)"),
+    ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
+  },
+  async (args) => {
+    const r = optimize(args.grid, args.plan as PlanStep[], { proven: args.proven, ruleset: args.ruleset });
+    const text = r.valid
+      ? `${r.optimal ? "optimal" : "condensed"}: ${r.moves} move(s) / ${r.pushes} push(es)${r.improvedFromMoves !== null ? ` (was ${r.improvedFromMoves})` : ""} — ${r.reason}`
+      : `cannot optimize — ${r.reason}`;
+    return { content: [{ type: "text", text }], structuredContent: r };
   },
 );
