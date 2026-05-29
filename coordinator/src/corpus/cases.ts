@@ -57,9 +57,9 @@ export const ALGEBRA_CASES: Case[] = [
 
 export const GRID_CASES: Case[] = [
   { id: "grid-push1", domain: "grid", input: g("#####", "#@+~#", "#####"), expect: { valid: true, moves: 1, pushes: 1 }, difficulty: "trivial", source: "hand-verified" },
-  { id: "grid-push2-tunnel", domain: "grid", input: g("######", "#@+.~#", "######"), expect: { valid: true, moves: 2, pushes: 1 }, difficulty: "trivial", source: "hand-verified", note: "2-cell push collapses to one tunnel macro" },
-  { id: "grid-push-left", domain: "grid", input: g("#######", "#~ + @#", "#######"), expect: { valid: true, moves: 3, pushes: 1 }, difficulty: "easy", source: "hand-verified" },
-  { id: "grid-walk-around", domain: "grid", input: g("#######", "#~ +  #", "#   @ #", "#######"), expect: { valid: true, moves: 3, pushes: 2 }, difficulty: "easy", source: "hand-verified", note: "open below the box -> two separate pushes, not a tunnel" },
+  { id: "grid-push2", domain: "grid", input: g("######", "#@+.~#", "######"), expect: { valid: true, moves: 2, pushes: 2 }, difficulty: "trivial", source: "hand-verified", note: "box pushed two cells = two single-cell push events" },
+  { id: "grid-push-left", domain: "grid", input: g("#######", "#~ + @#", "#######"), expect: { valid: true, moves: 3, pushes: 2 }, difficulty: "easy", source: "hand-verified" },
+  { id: "grid-walk-around", domain: "grid", input: g("#######", "#~ +  #", "#   @ #", "#######"), expect: { valid: true, moves: 3, pushes: 2 }, difficulty: "easy", source: "hand-verified" },
   { id: "grid-player-goal", domain: "grid", input: g("#####", "#@.x#", "#####"), expect: { valid: true, moves: 2, pushes: 0 }, difficulty: "trivial", source: "hand-verified", note: "player-goal only, no boxes" },
   { id: "grid-two-box-row", domain: "grid", input: g("#######", "#@ +.~#", "#  +.~#", "#######"), expect: { valid: true, moves: 8, pushes: 4 }, difficulty: "medium", source: "baseline (solve)" },
   { id: "grid-classic-small", domain: "grid", input: g("######", "#.  .#", "#.+@.#", "#.+ .#", "#. ~~#", "######"), expect: { valid: true, moves: 16, pushes: 6 }, difficulty: "medium", source: "baseline (solve)" },

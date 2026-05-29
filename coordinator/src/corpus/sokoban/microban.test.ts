@@ -5,25 +5,22 @@ import { solve } from "../../delegator/solve.js";
 
 /**
  * Difficulty-graded validation against the vendored Microban set (155 puzzles,
- * all solvable). The loader is validated fully and fast; the solver is smoke-
- * tested on an easy prefix. The FULL curve lives in the bench (npm run bench --
- * microban), which is where the solver's reach is measured.
+ * all solvable). The loader is validated fully and fast; the solver is asserted
+ * correct over an easy/medium prefix (a fast regression lock). The FULL curve —
+ * 145/155 solved within the default cap, the rest cap-limited (genuinely hard,
+ * not bugs) — lives in the bench (npm run bench -- microban).
  *
- * KNOWN BUG (surfaced by this very harness): the tunnel-macro push optimization
- * is UNSOUND — it slides a box past necessary intermediate rest cells, dropping
- * reachable states and reporting some solvable levels as unsolvable. 35/155 fail
- * because of it (run the bench to see them). Disabling the macro makes every one
- * solve. Those levels are SKIPPED here with this reason until the macro is fixed
- * or removed; they are not silently passed.
+ * History: this harness caught a real bug — the tunnel-macro push optimization
+ * was unsound (it slid a box past intermediate rest cells the player needs,
+ * reporting 35 solvable levels as unsolvable). The macro was removed; the prefix
+ * below now asserts cleanly with no skips.
  */
 
-// Levels the tunnel-macro bug currently breaks (from `npm run bench -- microban`).
-const TUNNEL_BUG = new Set([
-  10, 11, 14, 22, 27, 39, 46, 50, 58, 85, 92, 93, 97, 104, 105, 106, 108, 109,
-  111, 120, 121, 123, 132, 135, 138, 139, 143, 144, 145, 146, 148, 149, 152, 153, 155,
-]);
-
 const levels = loadMicroban();
+
+// The first level the OPTIMAL search can't crack within the default state cap
+// (genuinely hard, not a correctness failure). The prefix before it must solve.
+const PREFIX = 40;
 
 test("loads all 155 Microban levels, each well-formed", () => {
   assert.equal(levels.length, 155);
@@ -40,11 +37,9 @@ test("loads all 155 Microban levels, each well-formed", () => {
   }
 });
 
-// Smoke-test the easy prefix. Levels broken by the tunnel-macro bug are skipped
-// with a reason (visible in the test output), not asserted away.
-for (const lv of levels.slice(0, 20)) {
-  const buggy = TUNNEL_BUG.has(lv.number);
-  test(`solves Microban #${lv.number}`, { skip: buggy ? "tunnel-macro bug (see file header)" : false }, () => {
+// Regression lock: the easy/medium prefix must all solve optimally.
+for (const lv of levels.slice(0, PREFIX)) {
+  test(`solves Microban #${lv.number}`, () => {
     const r = solve(lv.grid);
     assert.equal(r.solvable, true, `level ${lv.number}: ${r.reason}`);
     assert.ok((r.moves ?? 0) > 0, `level ${lv.number}: expected a positive move count`);

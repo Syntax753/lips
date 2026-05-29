@@ -360,20 +360,6 @@ function analyzeRooms(p: Parsed): { roomOf: Int32Array; goalRoom: boolean[] } {
   return { roomOf, goalRoom };
 }
 
-/**
- * True if a box at `cell` pushed along (dr,dc) is in a 1-wide corridor: both
- * cells perpendicular to travel are walls. The box then can't be diverted and
- * the player can only follow directly behind, so a run of such cells collapses
- * into a single "tunnel macro" push (cost-preserving, since each cell is still
- * one real step).
- */
-function corridorAlong(p: Parsed, cell: number, dr: number, dc: number): boolean {
-  const r = Math.floor(cell / p.w);
-  const c = cell % p.w;
-  const wall = (rr: number, cc: number): boolean => rr < 0 || rr >= p.h || cc < 0 || cc >= p.w || p.walls.has(rr * p.w + cc);
-  return dr === 0 ? wall(r - 1, c) && wall(r + 1, c) : wall(r, c - 1) && wall(r, c + 1);
-}
-
 const allCovered = (p: Parsed, boxes: Set<number>): boolean => {
   for (const g of p.boxGoals) if (!boxes.has(g)) return false;
   return true;
@@ -884,11 +870,12 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
       pushed++;
     };
 
-    // Expand pushes. A push slides the box along the chosen direction; while it
-    // travels a 1-wide corridor it is forced straight and the player follows
-    // directly behind, so the whole run collapses into one move (a tunnel
-    // macro). We only stop — emitting a child — where the box can usefully rest:
-    // on a goal, where the corridor opens into a room, or against a blocker.
+    // Expand pushes — one cell per push. Each direction the player can get
+    // behind (`pushFrom` reachable) and the cell ahead is free yields a single
+    // child where the box advances one cell. (A "tunnel macro" that slid a box
+    // through a 1-wide corridor in one step was removed: it was unsound, skipping
+    // intermediate rest cells the player needs — vacating the box's origin can
+    // open new pushes — so it reported solvable boards as unsolvable.)
     for (const b of boxes) {
       const br = Math.floor(b / p.w);
       const bc = b % p.w;
@@ -898,20 +885,9 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET): Solv
         const pushFrom = (br - dr) * p.w + (bc - dc);
         if (!dist.has(pushFrom)) continue; // player cannot reach the pushing side
         const d = dr * p.w + dc;
-        let cell = b + d;
-        if (p.walls.has(cell) || boxes.has(cell)) continue; // blocked immediately
-        const base = cur.g + (dist.get(pushFrom) ?? 0); // steps to reach the pushing side
-        // Slide forward, emitting at each useful stop until the box can't (or shouldn't) continue.
-        for (let k = 1; ; k++) {
-          const r = Math.floor(cell / p.w);
-          const c = cell % p.w;
-          const ahead = cell + d;
-          const aheadInB = dr === 0 ? c + dc >= 0 && c + dc < p.w : r + dr >= 0 && r + dr < p.h;
-          const canContinue = aheadInB && !p.walls.has(ahead) && !boxes.has(ahead) && corridorAlong(p, cell, dr, dc);
-          if (p.boxGoals.has(cell) || !canContinue) emitPush(b, cell, d, base + k); // a useful stopping cell
-          if (!canContinue) break;
-          cell = ahead;
-        }
+        const rest = b + d;
+        if (p.walls.has(rest) || boxes.has(rest)) continue; // blocked immediately
+        emitPush(b, rest, d, cur.g + (dist.get(pushFrom) ?? 0) + 1); // walk to push side, then one push
       }
     }
   }

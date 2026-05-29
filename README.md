@@ -154,13 +154,14 @@ LIPS_MAX_STATES=100000 npm run bench -- microban
 (explored / pushed / pruned / ms) so a heuristic change can be measured, and the
 `microban` curve shows exactly which levels the solver clears and where it stops.
 
-> **Known solver bug (found by this harness).** The tunnel-macro push
-> optimization is unsound: it slides a box past intermediate rest cells that the
-> player needs, so it drops reachable states and reports **35/155** Microban
-> levels (including easy ones like #10, #11, #14) as *unsolvable*. Disabling the
-> macro makes every one solve. Those levels are skipped — with a reason — in the
-> test until the macro is fixed or removed; the bench lists them as tuning
-> targets. (The headline 19×17 board is a separate open target.)
+This harness earned its keep by catching a real bug: the tunnel-macro push
+optimization was **unsound** — it slid a box past intermediate rest cells the
+player needs, reporting **35/155** Microban levels (including easy #10/#11/#14) as
+*unsolvable*. The macro was removed (pushes are now one cell each; the minimum
+**move** count is unchanged). The solver now clears **145/155** within the default
+cap; the remaining 10 are genuinely hard boards where optimal A\* exhausts the
+state cap — real tuning targets for a stronger heuristic or the satisficing modes,
+not correctness bugs. (The headline 19×17 board is a separate open target.)
 
 ## Using the REPL
 
