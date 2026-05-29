@@ -1,6 +1,6 @@
 ---
 name: solve
-description: The front door to the lips engine — solve, validate, or decompose ANY statement: boolean logic, linear & nonlinear algebra (real and complex), Sokoban grids, timeline / people-connection ("is X related to Y?"), or compound mixes joined by and/or. It breaks the input into sections, shows which are BINARY truths vs which need ANALYSIS and the tool that handled each, routes free-form / relation parts to the agentic layer (connect-people / validate-smart), composes the result, and presents the verifiable per-section breakdown. Use for any "solve / is this true / is this solvable / are these connected / how many / which is bigger" request.
+description: The front door to the lips engine. Solve, validate, or decompose any statement — boolean logic, linear and nonlinear algebra (real and complex), Sokoban grids, timeline and people-connection, or compound mixes joined by and/or. It breaks the input into sections, shows which are binary truths versus which need analysis and the tool that handled each, routes free-form and relation parts to the agentic layer (connect-people or validate-smart), composes the result, and presents the verifiable per-section breakdown. Use for any solve, is-this-true, is-this-solvable, are-these-connected, how-many, or which-is-bigger request.
 ---
 
 # solve — the lips front door

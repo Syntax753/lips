@@ -1,6 +1,6 @@
 ---
 name: connect-people
-description: Determine whether real people are connectable through a chain of documented interpersonal relationships over time — met, starred with, sang with, married, friends with (and shared works/events) — chaining TRANSITIVELY so the endpoints need NOT overlap in time. Uses web search to discover the relationship chain and the lips timeline solver to verify connectivity deterministically. Use for "are X and Y related/connected?", "how is X linked to Y?", "find a path between these people", "six degrees", or to verify a set of people are mutually relatable. The target when an association question has no provided data and must be discovered.
+description: Determine whether real people are connectable through a chain of documented interpersonal relationships over time — met, starred with, sang with, married, friends with (and shared works or events) — chaining transitively so the endpoints need not overlap in time. Uses web search to discover the relationship chain and the lips timeline solver to verify connectivity deterministically. Use for are X and Y related or connected, how is X linked to Y, find a path between these people, six degrees, or to verify a set of people are mutually relatable. The target when an association question has no provided data and must be discovered.
 ---
 
 # connect-people
