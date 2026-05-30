@@ -14,3 +14,6 @@ go-mcp-server/bin/
 # Editor / OS
 .DS_Store
 Thumbs.db
+
+# Generated corpus run output (npm run solveall)
+coordinator/microban-*.txt
