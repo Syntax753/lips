@@ -28,10 +28,10 @@ test("loads all 155 Microban levels, each well-formed", () => {
     const rows = lv.grid.split("\n");
     const w = rows[0].length;
     assert.ok(rows.every((r) => r.length === w), `level ${lv.number}: rows not rectangular`);
-    const players = (lv.grid.match(/[@X&]/g) ?? []).length;
+    const players = (lv.grid.match(/[@X+]/g) ?? []).length;
     assert.equal(players, 1, `level ${lv.number}: expected exactly one player`);
-    const boxes = (lv.grid.match(/[+*]/g) ?? []).length;
-    const goals = (lv.grid.match(/[~*&]/g) ?? []).length;
+    const boxes = (lv.grid.match(/[$*]/g) ?? []).length;
+    const goals = (lv.grid.match(/[.*+]/g) ?? []).length;
     assert.ok(boxes >= 1, `level ${lv.number}: no boxes`);
     assert.equal(boxes, goals, `level ${lv.number}: ${boxes} boxes vs ${goals} goals`);
   }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { solve, optimize } from "./solve.js";
 
-const CLASSIC = ["######", "#.  .#", "#.+@.#", "#.+ .#", "#. ~~#", "######"].join("\n");
+const CLASSIC = ["######", "#    #", "# $@ #", "# $  #", "#  ..#", "######"].join("\n");
 
 test("condense tightens a satisficing plan without re-searching", () => {
   const sat = solve(CLASSIC, undefined, "decompose"); // a valid, non-minimal plan

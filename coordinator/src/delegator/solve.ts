@@ -83,7 +83,9 @@ type Parsed = {
 };
 
 function parse(grid: string, rs: RuleSet): Parsed | { error: string } {
-  const rows = grid.replace(/\r/g, "").replace(/ /g, ".").split("\n");
+  // Floor is a space (microban/XSB); anything not a wall/box/goal/player glyph is
+  // implicitly floor, so spaces are left as-is (and `.` is a box goal, not floor).
+  const rows = grid.replace(/\r/g, "").split("\n");
   while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
   if (rows.length === 0) return { error: "empty grid" };
   const w = rows[0].length;
@@ -110,7 +112,7 @@ function parse(grid: string, rs: RuleSet): Parsed | { error: string } {
       }
       if (isBox) boxes.add(cell);
       if (g === rs.goal || g === rs.playerOnGoal) playerGoal = cell; // 'x' or player on it 'X'
-      if (g === rs.boxGoal || g === rs.boxOnGoal || g === rs.playerOnBoxGoal) boxGoals.add(cell); // '~','*','&'
+      if (g === rs.boxGoal || g === rs.boxOnGoal || g === rs.playerOnBoxGoal) boxGoals.add(cell); // '.','*','+'
     }
   }
   if (players !== 1) return { error: `expected exactly one player, found ${players}` };
@@ -132,9 +134,9 @@ function render(p: Parsed, boxes: Set<number>, player: number): string {
             : p.boxGoals.has(cell)
               ? p.rs.playerOnBoxGoal ?? "@"
               : "@";
-      else if (boxes.has(cell)) row += p.boxGoals.has(cell) ? p.rs.boxOnGoal ?? "+" : p.rs.box ?? "+";
+      else if (boxes.has(cell)) row += p.boxGoals.has(cell) ? p.rs.boxOnGoal ?? "*" : p.rs.box ?? "$";
       else if (cell === p.playerGoal) row += p.rs.goal ?? "x";
-      else if (p.boxGoals.has(cell)) row += p.rs.boxGoal ?? "~";
+      else if (p.boxGoals.has(cell)) row += p.rs.boxGoal ?? ".";
       else row += p.floor;
     }
     rows.push(row);
@@ -763,7 +765,7 @@ export function solve(grid: string, rulesetName: string = DEFAULT_RULESET, modeA
 }
 
 function solveAuto(grid: string, rulesetName: string): SolveResult {
-  const boxCount = (grid.match(/[+*]/g) ?? []).length;
+  const boxCount = (grid.match(/[$*]/g) ?? []).length;
   if (boxCount > AUTO_BOX_LIMIT) return runSatisficing(grid, rulesetName); // too big to attempt optimal
   const opt = solveOnce(grid, rulesetName, "optimal");
   if (opt.solvable) return opt; // optimal solution found — keep it
@@ -1141,7 +1143,7 @@ export const bestmoveTool = tool(
 
 export const solveTool = tool(
   "solve",
-  "Deterministically solve a grid (ruleset default 'sokoban') and report the MINIMUM number of player moves. Full Sokoban: the player '@' moves onto floor '.', player goal 'x' (shown 'X') or an empty box goal '~' (shown '&'); walls '#' impassable; a box '+' (or one on a goal '*') is pushed when the tile beyond it is empty floor/box-goal. WIN: every box goal covered by a box AND (if present) the player on 'x'. The search is equivalence-collapsed over PUSHES (states differing only by where the player walked are one node) and ordered by player-step cost, so `moves` is the minimum step count; `pushes` is the box-push count. Very large state spaces stop at a cap (see `reason`). The per-state search progress is logged to the terminal, not returned here. Returns { solvable, moves, pushes, winning, explored, pushed, pruned }.",
+  "Deterministically solve a grid (ruleset default 'sokoban', microban/XSB glyphs) and report the MINIMUM number of player moves. Full Sokoban: the player '@' moves onto floor ' ' (space), player goal 'x' (shown 'X') or an empty box goal '.' (shown '+'); walls '#' impassable; a box '$' (or one on a goal '*') is pushed when the tile beyond it is empty floor/box-goal. WIN: every box goal covered by a box AND (if present) the player on 'x'. The search is equivalence-collapsed over PUSHES (states differing only by where the player walked are one node) and ordered by player-step cost, so `moves` is the minimum step count; `pushes` is the box-push count. Very large state spaces stop at a cap (see `reason`). The per-state search progress is logged to the terminal, not returned here. Returns { solvable, moves, pushes, winning, explored, pushed, pruned }.",
   {
     grid: z.string().describe("the start state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
@@ -1158,6 +1160,60 @@ export const solveTool = tool(
 
 /** A `Dir`'s row-major delta for a board of width `w`. */
 const DIR_DELTA = (dir: Dir, w: number): number => (dir === "U" ? -w : dir === "D" ? w : dir === "L" ? -1 : 1);
+
+/**
+ * Replay a solver's push-VECTOR plan into the canonical Sokoban move string: one
+ * character per player step in LURD notation — lowercase u/d/l/r for a walk,
+ * UPPERCASE U/D/L/R for a push — taking the shortest walk between pushes. Unlike
+ * the result's `route` (truncated at MAX_PATH), this is uncapped, so it is the
+ * source of truth for the FULL play. Returns the move string, its move/push
+ * counts, and whether it genuinely replays to a win.
+ */
+export function planToLURD(
+  grid: string,
+  plan: PlanStep[],
+  rulesetName: string = DEFAULT_RULESET,
+): { lurd: string; moves: number; pushes: number; valid: boolean } {
+  const rs = getRuleSet(rulesetName);
+  const p = parse(grid, rs);
+  if ("error" in p) return { lurd: "", moves: 0, pushes: 0, valid: false };
+  const boxes = new Set(p.boxes);
+  let player = p.player;
+  const stepChar = (delta: number, push: boolean): string => {
+    const ch = delta === -p.w ? "u" : delta === p.w ? "d" : delta === -1 ? "l" : "r";
+    return push ? ch.toUpperCase() : ch;
+  };
+  let lurd = "";
+  let pushes = 0;
+  for (const v of plan) {
+    const d = DIR_DELTA(v.dir, p.w);
+    let box = v.box;
+    for (let k = 0; k < v.len; k++) {
+      const pushFrom = box - d;
+      const { prev, dist } = walkBFS(p, boxes, player);
+      if (!dist.has(pushFrom)) return { lurd, moves: lurd.length, pushes, valid: false };
+      const walk = walkSteps(prev, pushFrom);
+      for (let j = 1; j < walk.length; j++) lurd += stepChar(walk[j] - walk[j - 1], false);
+      boxes.delete(box);
+      boxes.add(box + d);
+      lurd += stepChar(d, true);
+      pushes++;
+      player = box; // player follows into the box's vacated cell
+      box += d;
+    }
+  }
+  // Final walk onto the player goal, if the ruleset has one and we are not on it.
+  if (p.playerGoal !== null && player !== p.playerGoal) {
+    const { prev, dist } = walkBFS(p, boxes, player);
+    if (dist.has(p.playerGoal)) {
+      const walk = walkSteps(prev, p.playerGoal);
+      for (let j = 1; j < walk.length; j++) lurd += stepChar(walk[j] - walk[j - 1], false);
+      player = p.playerGoal; // we are now standing on it
+    }
+  }
+  const valid = allCovered(p, boxes) && (p.playerGoal === null || player === p.playerGoal);
+  return { lurd, moves: lurd.length, pushes, valid };
+}
 
 /** Render a solved result's colour ASCII view (auto colour by TTY / NO_COLOR). */
 export function renderResult(grid: string, r: SolveResult, color?: boolean): string {

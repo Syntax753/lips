@@ -28,8 +28,8 @@ export type ExpandResult = {
 };
 
 function parseGrid(grid: string): string[] {
-  // A space is an alternate spelling of empty floor.
-  const rows = grid.replace(/\r/g, "").replace(/ /g, ".").split("\n");
+  // Floor is a space (microban/XSB); `.` is a box goal, so spaces are left as-is.
+  const rows = grid.replace(/\r/g, "").split("\n");
   while (rows.length > 0 && rows[rows.length - 1] === "") rows.pop();
   if (rows.length === 0) throw new Error("empty grid");
   const width = rows[0].length;
@@ -220,7 +220,7 @@ export function expand(grid: string, rulesetName: string = DEFAULT_RULESET): Exp
 
 export const statemachineTool = tool(
   "statemachine",
-  "Given a game state as an ASCII grid and a ruleset (default 'sokoban'), return ALL legal next states. The player '@' moves orthogonally onto floor '.' or goal 'x' (standing on the goal is shown 'X'); walls '#' are impassable; a box '+' may be pushed only when the tile beyond it is empty floor '.' or an empty box goal '~' (the box slides there — covering a goal makes it '*' — and the player takes its square). `success` is true when the WIN is met: every box goal '~' covered AND (if present) the player on 'x'. `score` is the count of uncovered box goals (or, with no box goals, the player's Manhattan distance to 'x'); lower = closer.",
+  "Given a game state as an ASCII grid and a ruleset (default 'sokoban', microban/XSB glyphs), return ALL legal next states. The player '@' moves orthogonally onto floor ' ' (space) or goal 'x' (standing on the goal is shown 'X'); walls '#' are impassable; a box '$' may be pushed only when the tile beyond it is empty floor or an empty box goal '.' (the box slides there — covering a goal makes it '*' — and the player takes its square). `success` is true when the WIN is met: every box goal '.' covered AND (if present) the player on 'x'. `score` is the count of uncovered box goals (or, with no box goals, the player's Manhattan distance to 'x'); lower = closer.",
   {
     grid: z.string().describe("the current state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

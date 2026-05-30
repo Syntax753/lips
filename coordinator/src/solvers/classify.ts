@@ -16,8 +16,8 @@ import type { SolverKind } from "./contract.js";
  *   unknown   — free-form text; the agentic coordinator must decompose it
  */
 
-/** Sokoban static + dynamic glyphs, plus space (parse() treats space as floor). */
-const GRID_GLYPHS = new Set([..."#.x@+~*X& "]);
+/** Sokoban static + dynamic glyphs (microban/XSB), incl. space — the floor. */
+const GRID_GLYPHS = new Set([..."#.x@$*X+ "]);
 
 export interface Classification {
   kind: SolverKind;
@@ -64,7 +64,7 @@ function looksLikeGrid(input: string): boolean {
     for (const ch of line) {
       if (!GRID_GLYPHS.has(ch)) return false; // any foreign char rules out a grid
       if (ch === "#") walls++;
-      if (ch === "@" || ch === "X" || ch === "&") players++;
+      if (ch === "@" || ch === "X" || ch === "+") players++;
     }
   }
   // A real puzzle has at least one wall and exactly one player.

@@ -6,9 +6,9 @@ import { validate } from "./validate.js";
 
 // A minimal solvable Sokoban: push the box one cell right onto its goal.
 //   #####
-//   #@+~#
+//   #@$.#
 //   #####
-const TINY_GRID = ["#####", "#@+~#", "#####"].join("\n");
+const TINY_GRID = ["#####", "#@$.#", "#####"].join("\n");
 
 // The Tony word problem, but as explicit equations (the deterministic path).
 const TONY = "M = 4*T\nM - 10 = 2*(T - 10)";

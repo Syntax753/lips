@@ -108,23 +108,21 @@ function paintGlyph(ch: string, on: boolean): string {
       return wrap(ch, C.gray, on);
     case "@":
     case "X":
-    case "&":
+    case "+": // player, player-on-goal, player-on-box-goal
       return wrap(ch, C.bold + C.green, on);
-    case "+":
+    case "$": // box
       return wrap(ch, C.yellow, on);
-    case "*":
+    case "*": // box on goal
       return wrap(ch, C.bold + C.green, on);
-    case "~":
-    case "x":
+    case ".": // box goal
+    case "x": // player goal
       return wrap(ch, C.cyan, on);
     case "↑":
     case "↓":
     case "←":
     case "→":
       return wrap(ch, C.magenta, on);
-    case ".":
-      return wrap(ch, C.dim, on);
-    default:
+    default: // floor (space) and anything else
       return ch;
   }
 }
@@ -149,7 +147,7 @@ function trailGrid(attempted: string, plan: PlanStep[], w: number): string {
       c += dc;
       if (!inB(r, c)) break;
       const cur = rows[r][c];
-      if (cur === "#" || cur === "~" || cur === "x") continue; // keep walls/goals legible
+      if (cur === "#" || cur === "." || cur === "x") continue; // keep walls/goals legible
       rows[r][c] = ARROW[v.dir];
     }
   }

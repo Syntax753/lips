@@ -13,9 +13,9 @@ export type GridValidResult = {
   width: number;
   height: number;
   players: number;
-  /** Box goals present (empty `~` plus covered `*`). */
+  /** Box goals present (empty `.` plus covered `*`). */
   boxGoals: number;
-  /** Boxes present (on floor `+` plus on a goal `*`). */
+  /** Boxes present (on floor `$` plus on a goal `*`). */
   boxes: number;
 };
 
@@ -26,8 +26,8 @@ export function gridValid(grid: string): GridValidResult {
   const width = height > 0 ? rows[0].length : 0;
   const players = (grid.match(/@/g) ?? []).length;
   const count = (glyph: string): number => grid.split(glyph).length - 1;
-  const boxGoals = count("~") + count("*"); // empty + covered goals
-  const boxes = count("+") + count("*"); // boxes on floor + on goals
+  const boxGoals = count(".") + count("*"); // empty + covered goals
+  const boxes = count("$") + count("*"); // boxes on floor + on goals
 
   let ok = true;
   let reason = "well-formed grid";
@@ -91,7 +91,7 @@ export function evaluateMoves(
 
 export const gridvalidTool = tool(
   "gridvalid",
-  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Floor '.', goal 'x', wall '#', box '+', box goal '~' and box-on-goal '*' are all valid cells. Preflight: there must be at least as many boxes as box goals, or it cannot be solved. Returns ok=true/false plus the dimensions, boxGoals and boxes counts.",
+  "Check that an ASCII grid state is well-formed (rectangular, exactly one '@'). Floor ' ' (space), player goal 'x', wall '#', box '$', box goal '.' and box-on-goal '*' are all valid cells (microban/XSB glyphs). Preflight: there must be at least as many boxes as box goals, or it cannot be solved. Returns ok=true/false plus the dimensions, boxGoals and boxes counts.",
   { grid: z.string().describe("the state as an ASCII grid") },
   async (args) => {
     const r = gridValid(args.grid);
@@ -101,7 +101,7 @@ export const gridvalidTool = tool(
 
 export const goalmetTool = tool(
   "goalmet",
-  "Postflight win check for a grid (ruleset default 'sokoban'): returns true when the WIN condition is met — every box goal '~' is covered by a box AND (if the grid has a player goal) the player is standing on 'x' (shown as 'X'). A grid with no goals returns false. This is the decision point for whether the puzzle is solved.",
+  "Postflight win check for a grid (ruleset default 'sokoban', microban/XSB glyphs): returns true when the WIN condition is met — every box goal '.' is covered by a box AND (if the grid has a player goal) the player is standing on 'x' (shown as 'X'). A grid with no goals returns false. This is the decision point for whether the puzzle is solved.",
   {
     grid: z.string().describe("the current state as an ASCII grid"),
     ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),

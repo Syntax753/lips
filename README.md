@@ -183,8 +183,10 @@ with its expected verdict. The runner feeds every case through the one
 `validate` entry, so the corpus is the end-to-end test of classify → route →
 solve. For Sokoban specifically there is a **difficulty-graded harness**: the
 vendored, public-domain **Microban** set (155 puzzles by David W. Skinner,
-`src/corpus/sokoban/microban.txt`), ordered easy → hard, loaded and converted to
-the lips glyph set by `microban.ts`.
+`src/corpus/sokoban/microban.txt`), ordered easy → hard. It is in standard
+microban/XSB notation — which is also the solver's default glyph set (`#` wall,
+`@` player, `$` box, `.` goal, `*` box-on-goal, `+` player-on-goal, space floor)
+— so `microban.ts` loads each board as-is, only padding to a rectangle.
 
 ```sh
 npm test                       # corpus suite + Microban loader/prefix smoke
@@ -196,6 +198,34 @@ LIPS_MAX_STATES=100000 npm run bench -- microban
 `bench` is for tuning, not pass/fail: it reports search effort
 (explored / pushed / pruned / ms) so a heuristic change can be measured, and the
 `microban` curve shows exactly which levels the solver clears and where it stops.
+
+For a **demo-quality solution report** — every level solved end to end, laid out
+as a table plus the actual player moves — use `npm run report`:
+
+```sh
+npm run report                 # all 155 levels: table + per-level solution
+npm run report -- 1-40         # a range (fast demo); or 3,7,93 for specific levels
+npm run report -- --boards     # also print each start board in microban glyphs
+LIPS_MAX_STATES=1500000 npm run report   # raise the search cap (solves more, slower)
+```
+
+It runs the `auto` solver over the corpus and prints (1) a per-level **table** —
+boxes · result · **moves** · **pushes** · time, with a solved/optimal/satisficing
+summary — and (2) the full **player move sequence** for each level in canonical
+LURD notation (lowercase `u/d/l/r` = a step, **UPPERCASE** = a push). Every move
+string is independently **replayed to a win** before it is accepted, so the report
+verifies the solver rather than just echoing it. Grids are shown in the standard
+microban/XSB glyph set (`#` wall, `@` player, `$` box, `.` goal, `*` box-on-goal).
+
+```
+ Lvl  Box  Result        Moves   Pushes      Time
+────────────────────────────────────────────────────
+   1    2  ✓ optimal        33        8      3 ms
+  93    8  ✓ solved*       247       68    25.5 s   (* satisficing — valid, not minimal)
+
+Level 1  2 box · 33 moves · 8 pushes · optimal
+    dlUrrrdLullddrUluRuulDrddrruLdlUU
+```
 
 This harness earned its keep by catching a real bug: the tunnel-macro push
 optimization was **unsound** — it slid a box past intermediate rest cells the

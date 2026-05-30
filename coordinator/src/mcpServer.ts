@@ -70,7 +70,7 @@ server.registerTool(
   {
     title: "Solve a Sokoban grid (minimum moves)",
     description:
-      "Deterministically solve an ASCII grid (ruleset default 'sokoban') and report the MINIMUM player moves. Glyphs: player '@', floor '.', player goal 'x' (player on it 'X'), walls '#', box '+' (on a goal '*'), empty box goal '~'. WIN: every box goal covered AND (if present) the player on 'x'. Search is equivalence-collapsed over pushes and A*-ordered, so `moves` is the true minimum; `pushes` is the box-push count. Returns { solvable, moves, pushes, winning, explored, pushed, pruned }.",
+      "Deterministically solve an ASCII grid (ruleset default 'sokoban', microban/XSB glyphs) and report the MINIMUM player moves. Glyphs: player '@', floor ' ' (space), player goal 'x' (player on it 'X'), walls '#', box '$' (on a goal '*'), empty box goal '.'. WIN: every box goal covered AND (if present) the player on 'x'. Search is equivalence-collapsed over pushes and A*-ordered, so `moves` is the true minimum; `pushes` is the box-push count. Returns { solvable, moves, pushes, winning, explored, pushed, pruned }.",
     inputSchema: {
       grid: z.string().describe("the start state as an ASCII grid"),
       ruleset: z.string().optional().describe("ruleset name (default: sokoban)"),
