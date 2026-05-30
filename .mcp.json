@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "lips": {
+      "command": "node",
+      "args": ["coordinator/dist/mcpServer.js"]
+    },
+    "lips-smart": {
+      "command": "node",
+      "args": ["coordinator/dist/mcpServerSmart.js"]
+    }
+  }
+}
