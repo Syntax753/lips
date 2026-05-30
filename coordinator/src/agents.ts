@@ -83,12 +83,14 @@ export function specialistAgents(): Record<string, AgentDefinition> {
   }
 
   agents[ARITHMETIC_SPECIALIST] = {
-    description: "Calculates with numbers: multiply, add, subtract, divide.",
+    description: "Calculates with numbers: multiply, add, subtract, divide, power, sqrt, negate.",
     prompt: [
       "You perform arithmetic.",
-      `Call the matching tool (mcp__${OPS_SERVER}__multiply / __add / __subtract / __divide) with the`,
-      "two operands. If given a multi-step calculation, chain the tools, feeding each result into the",
-      "next. Never calculate in your head. Reply with ONLY the final number.",
+      `Call the matching tool with the operand(s): the BINARY tools (mcp__${OPS_SERVER}__multiply / __add /`,
+      "__subtract / __divide / __power) take {lhs, rhs}; the UNARY tools (__sqrt / __negate) take {value}.",
+      "A square root is __sqrt{value} (or __power with rhs=0.5); an exponent is __power{lhs=base, rhs=exp}.",
+      "If given a multi-step calculation, chain the tools, feeding each result into the next. Never",
+      "calculate in your head. Reply with ONLY the final number.",
     ].join(" "),
     tools: [...ARITHMETIC_TOOLS],
     model,
@@ -224,7 +226,8 @@ export function coordinatorSystemPrompt(): string {
     `         -> "${DECISION_SPECIALIST}"  (it takes comparator numeric/alpha/outcome and goal max/min;`,
     "            outcome ranks JSON {expectedValue, survivalProbability}, survival first).",
     "",
-    `  ARITHMETIC — multiply / add / subtract / divide numbers (every step, even 4 + 2):`,
+    `  ARITHMETIC — multiply / add / subtract / divide / power (a^b) / sqrt (√a) / negate (-a) numbers`,
+    `         (every step, even 4 + 2, and every exponent, root, or negation — never in your head):`,
     `         -> "${ARITHMETIC_SPECIALIST}"  (delegate each operation; chain for multi-step formulas).`,
     "",
     `  DERIVATION — equations / word problems / systems of unknowns:`,
