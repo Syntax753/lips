@@ -62,7 +62,7 @@ function toolFor(kind: SolverKind, clause: string): string {
     case "boolean":
       return "comparator — boolean truth";
     case "algebraic":
-      return /\^/.test(clause) ? "nonlinear analyzer (ℝ/ℂ)" : "linear system solver";
+      return /[\^/]/.test(clause) ? "nonlinear analyzer (ℝ/ℂ)" : "linear system solver";
     case "timeline":
       return "reachable — timeline connectivity";
     case "grid":

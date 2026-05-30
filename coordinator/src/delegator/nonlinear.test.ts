@@ -30,9 +30,37 @@ test("odd-degree univariate always has a real root", () => {
   assert.equal(analyzeNonlinear("x^3 = 8").reals, "solvable");
 });
 
-test("mixed-sign multivariate is DEFERRED over ℝ, not guessed", () => {
-  const r = analyzeNonlinear("x^2 - y^2 = -1"); // actually real-solvable, but our slice doesn't prove it
-  assert.equal(r.reals, "unknown");
+test("mixed-sign multivariate is solved by the witness search (was deferred)", () => {
+  const r = analyzeNonlinear("x^2 - y^2 = -1"); // real-solvable, e.g. x=0, y=1
+  assert.equal(r.reals, "solvable");
+  assert.equal(r.complex, "solvable");
+  assert.ok(r.witness, "a concrete witness is produced");
+});
+
+test("under-determined multivariate gets a verified existence witness", () => {
+  const r = analyzeNonlinear("x^2 + y^3 = x + y + 17");
+  assert.equal(r.reals, "solvable");
+  assert.equal(r.complex, "solvable");
+  assert.ok(r.witness, "a concrete witness is produced");
+});
+
+test("division (/) parses: rational equation cleared and solved", () => {
+  const r = analyzeNonlinear("x^2 + y^3 = x/y");
+  assert.equal(r.complex, "solvable");
+  assert.equal(r.reals, "solvable"); // e.g. x=(√5-1)/2, y=-1
+  assert.deepEqual(r.domain, ["y"]); // y ≠ 0 recorded from the denominator
+  assert.ok(r.witness);
+});
+
+test("1/x = 0 has no solution (cleared to a nonzero constant)", () => {
+  const r = analyzeNonlinear("1/x = 0");
+  assert.equal(r.reals, "unsolvable");
+  assert.deepEqual(r.domain, ["x"]);
+});
+
+test("witness search never fakes an unsolvable form (sum of squares = -1)", () => {
+  const r = analyzeNonlinear("x^2 + y^2 = -1");
+  assert.equal(r.reals, "unsolvable"); // search must not override a proven 'unsolvable'
   assert.equal(r.complex, "solvable");
 });
 

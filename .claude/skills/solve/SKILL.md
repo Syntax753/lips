@@ -12,12 +12,22 @@ prove; the agentic layer handles the free-form rest.
 
 ## Steps
 
-1. **Decompose + classify.** Run the lips **`breakdown`** tool on the full input
-   (or **`validate`** for a single clause). Each section comes back tagged:
+1. **Decompose + classify — ALWAYS run `breakdown` first.** Pass the full input to
+   the lips **`breakdown`** tool *before any routing*, with **no exceptions** — a
+   relation/connection question ("is X related to Y") goes through `breakdown` too,
+   not straight to `connect-people`. This guarantees every task starts from one
+   uniform, inspectable classification. (The *only* shortcut: a pasted Sokoban grid
+   may go directly to **`solve`**, since `breakdown` would merely re-invoke the same
+   solver without the colour movement view.) Each section comes back tagged:
    - **binary** — a boolean truth → the comparator leaf;
    - **analysed** — needs a solver → algebra (linear, or the nonlinear ℝ/ℂ
-     analyser), Sokoban **`solve`**, or timeline **`reachable`**;
+     analyser — which now handles `/` division and under-determined *existence*
+     witnesses), Sokoban **`solve`**, or timeline **`reachable`**;
    - **deferred** — free natural language the deterministic core won't guess at.
+
+   The lips tools (`breakdown`, `validate`, `solve`, `reachable`, `algebraic`) and
+   the `lips-smart` tools are pre-registered MCP tools (see `.mcp.json`); their
+   schemas load **at most once** per session — call them directly, don't re-search.
 
 2. **Resolve each section.**
    - *binary / analysed* — already answered by the deterministic leaf; the
@@ -47,6 +57,10 @@ prove; the agentic layer handles the free-form rest.
 ## Examples
 - `5 > 3 and 2 < 1` → two **binary** sections → boolean composition → **false**.
 - `x^2 + y^2 = -1` → **nonlinear analyser** → no real solution; solvable over ℂ.
+- `x^2 + y^3 = x/y` → **nonlinear analyser** → clears the `/` (records y ≠ 0), finds a
+  verified real witness (e.g. x ≈ −1.618, y = −1); solvable over ℝ and ℂ.
+- `x^2 + y^3 = x + y + 17` → **nonlinear analyser** → under-determined, so it returns a
+  checked existence witness (e.g. x ≈ 4.653, y = 0) instead of deferring.
 - `is Arnold Schwarzenegger related to Tony Blackburn?` → **connect-people** →
   Arnold → Ali → Lennon → Geller → Blackburn.
 - a pasted Sokoban grid → **`solve`** → minimum moves + colour movement view.

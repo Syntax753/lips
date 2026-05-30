@@ -85,7 +85,7 @@ export function fromNonlinear(r: NonlinearResult): Verdict {
   return {
     kind: "algebraic",
     valid: r.reals === "solvable",
-    witness: r.ok ? { reals: r.reals, complex: r.complex, sample: r.witness } : null,
+    witness: r.ok ? { reals: r.reals, complex: r.complex, sample: r.witness, domain: r.domain } : null,
     metrics: {},
     reason: r.reason,
   };

@@ -35,9 +35,9 @@ function run(input: string, c: Classification): Verdict {
         .split(/[\n;]+/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-      // Power notation (`^`) is nonlinear — route to the sound nonlinear slice
-      // (single equation); the linear solver handles the rest.
-      if (equations.some((e) => /\^/.test(e))) {
+      // Power notation (`^`) or division (`/`) is nonlinear/rational — route to the
+      // sound nonlinear slice (single equation); the linear solver handles the rest.
+      if (equations.some((e) => /[\^/]/.test(e))) {
         if (equations.length === 1) return fromNonlinear(analyzeNonlinear(equations[0]));
         return { kind: "algebraic", valid: false, witness: null, metrics: {}, reason: "nonlinear system — the nonlinear slice handles a single equation only" };
       }
