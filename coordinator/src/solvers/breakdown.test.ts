@@ -30,6 +30,29 @@ test("a free-NL clause is flagged deferred, not mis-analysed", () => {
   assert.ok(b.sections.some((s) => s.type === "deferred"));
 });
 
+test("a geopolitical clause is tagged deferred·political, routed to the political skill", () => {
+  const b = breakdown("will world war one end in 1918");
+  assert.equal(b.sections.length, 1);
+  assert.equal(b.sections[0].type, "deferred");
+  assert.equal(b.sections[0].kind, "political");
+  assert.match(b.sections[0].tool, /political/);
+  assert.equal(b.sections[0].valid, null); // undecided in the deterministic view
+  assert.match(b.composition, /political web-research skill/);
+});
+
+test("escalateBreakdown labels political sections but does NOT fake-resolve them (no web in the coordinator)", async () => {
+  const b = breakdown("does the UAE have more oil than the US");
+  let calls = 0;
+  const full = await escalateBreakdown(b, async () => {
+    calls++;
+    return { answer: "x", value: true, trace: [] };
+  });
+  assert.equal(calls, 0); // political is left for the political skill, not escalated
+  assert.equal(full.sections[0].kind, "political");
+  assert.equal(full.sections[0].valid, null);
+  assert.equal(full.sections[0].agentic, undefined);
+});
+
 test("a single comparison is one binary section", () => {
   const b = breakdown("12 > 14");
   assert.equal(b.sections.length, 1);

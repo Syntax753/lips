@@ -13,6 +13,9 @@ import type { SolverKind } from "./contract.js";
  *   grid      — a multi-line block of nothing but Sokoban glyphs, with structure
  *   boolean   — a numeric comparison, or a homogeneous and/or chain of them
  *   algebraic — an `=` with an alphabetic unknown (and not a bare numeric compare)
+ *   political — a geopolitical/factual claim (war, treaty, country, oil/GDP, …);
+ *               the deterministic core can't decide it — the web-research `political`
+ *               skill does (research → comparator/timeline verdict). A heuristic tag.
  *   unknown   — free-form text; the agentic coordinator must decompose it
  */
 
@@ -76,6 +79,30 @@ function looksLikeAlgebra(input: string): boolean {
   return input.includes("=") && /[a-zA-Z]/.test(input);
 }
 
+/**
+ * Heuristic: does this free-NL statement carry geopolitical/factual-claim signals
+ * (conflicts, statecraft, blocs, named wars, or resource/economy comparisons)? It
+ * is deliberately a HINT, not a verdict — only reached after the structural kinds
+ * are ruled out, and the `political` skill makes the final routing/answer call. A
+ * false positive merely labels a clause "political" for the skill to research; it
+ * never decides truth here. People-relation questions (no geo signal) stay unknown
+ * so they route to connect-people instead.
+ */
+function looksLikeGeopolitical(input: string): boolean {
+  return [
+    // conflicts & statecraft
+    /\b(wars?|treat(?:y|ies)|borders?|invasions?|invaded?|annex(?:ed|ation)?|sovereignty|alliances?|sanctions?|coup|ceasefire|armistice|independence|colon(?:y|ial|ies)|empires?|referendum)\b/i,
+    // governance & actors
+    /\b(president|presidency|prime minister|chancellor|monarch|parliament|congress|senate|government|elections?|regime|dictator|nations?|count(?:ry|ries))\b/i,
+    // institutions / blocs (whole-word, incl. acronyms)
+    /\b(NATO|United Nations|European Union|UN|EU|WHO|OPEC|G7|G20|Commonwealth)\b/,
+    // resource / economy comparisons (the "more X than" geopolitics)
+    /\b(oil|petroleum|gas|GDP|economy|economic|reserves?|exports?|imports?|population|military|nuclear|army|navy|territory|landmass|currency)\b/i,
+    // named wars / eras
+    /\b(world war|ww[12i]|cold war|civil war|gulf war|vietnam war)\b/i,
+  ].some((re) => re.test(input));
+}
+
 export function classify(input: string): Classification {
   if (looksLikeTimeline(input)) {
     return { kind: "timeline", confidence: "high", note: "JSON list of characters with presence intervals" };
@@ -91,6 +118,13 @@ export function classify(input: string): Classification {
   }
   if (looksLikeAlgebra(input)) {
     return { kind: "algebraic", confidence: "high", note: "equation(s) with unknown(s)" };
+  }
+  if (looksLikeGeopolitical(input)) {
+    return {
+      kind: "political",
+      confidence: "low",
+      note: "geopolitical/factual claim — route to the political web-research skill (research → comparator/timeline verdict)",
+    };
   }
   return {
     kind: "unknown",

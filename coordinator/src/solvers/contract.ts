@@ -15,13 +15,14 @@ import type { NonlinearResult } from "../delegator/nonlinear.js";
  *   algebraic -> uniquely solved?  witness = the solution map
  *   timeline  -> A reaches all?    witness = the propagation chain   (Phase 4)
  *   boolean   -> evaluates true?   witness = the evaluated atoms
+ *   political -> claim true?       witness = researched facts + sources (web; via the political skill, not here)
  *
  * `valid` is always the core yes/no. `witness` is the proof for it (or null).
  * `metrics` is a flat bag of domain numbers (moves, unknowns, hops, ...) for
  * the corpus to assert against and the tuning harness to track.
  */
 
-export type SolverKind = "grid" | "algebraic" | "timeline" | "boolean" | "unknown";
+export type SolverKind = "grid" | "algebraic" | "timeline" | "boolean" | "political" | "unknown";
 
 export interface Verdict {
   /** Which solver produced this. */

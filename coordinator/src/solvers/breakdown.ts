@@ -44,6 +44,7 @@ const TYPE: Record<SolverKind, SectionType> = {
   algebraic: "analysed",
   timeline: "analysed",
   grid: "analysed",
+  political: "deferred", // needs the open web — the political skill, not a deterministic leaf
   unknown: "deferred",
 };
 
@@ -67,6 +68,8 @@ function toolFor(kind: SolverKind, clause: string): string {
       return "reachable — timeline connectivity";
     case "grid":
       return "sokoban solver";
+    case "political":
+      return "political solver — web research → comparator/timeline verdict";
     default:
       return "needs agentic layer (validate-smart / connect-people)";
   }
@@ -93,7 +96,8 @@ export function breakdown(input: string): Breakdown {
       kind: v.kind,
       type: TYPE[v.kind],
       tool: toolFor(v.kind, piece),
-      valid: v.kind === "unknown" ? null : v.valid,
+      valid: TYPE[v.kind] === "deferred" ? null : v.valid, // deferred kinds (unknown, political) are undecided here
+
       reason: v.reason,
     });
     connector = null;
@@ -114,7 +118,11 @@ function compose(sections: Section[]): string {
     return `boolean composition → ${acc}`;
   }
   // Unresolved only if a deferred section was neither decided nor escalated.
-  if (sections.some((s) => s.type === "deferred" && s.valid === null && !s.agentic)) {
+  const unresolved = sections.filter((s) => s.type === "deferred" && s.valid === null && !s.agentic);
+  if (unresolved.length > 0) {
+    if (unresolved.every((s) => s.kind === "political")) {
+      return "geopolitical claim(s) — route to the political web-research skill";
+    }
     return "compound with unresolved section(s) — escalate to the agentic layer";
   }
   if (sections.some((s) => s.agentic)) {
@@ -125,11 +133,13 @@ function compose(sections: Section[]): string {
 }
 
 /**
- * Resolve every DEFERRED (free-NL) section by escalating it to the agentic
+ * Resolve every free-NL `unknown` section by escalating it to the agentic
  * coordinator — `resolve` runs `validate-smart` on the clause and returns its
  * answer, a parsed boolean (if any), and the delegation trace. Deterministic
- * sections are left untouched. The deterministic core has no `resolve`; only the
- * agentic server wires one in, which keeps the layering intact.
+ * sections are left untouched, and so are `political` sections (the coordinator
+ * has no web access — they stay labelled for the front-door `political` skill).
+ * The deterministic core has no `resolve`; only the agentic server wires one in,
+ * which keeps the layering intact.
  */
 export async function escalateBreakdown(
   b: Breakdown,
@@ -137,7 +147,9 @@ export async function escalateBreakdown(
 ): Promise<Breakdown> {
   const sections = await Promise.all(
     b.sections.map(async (s): Promise<Section> => {
-      if (s.type !== "deferred") return s;
+      // Political sections need the open web, which the coordinator (validate-smart)
+      // lacks — leave them labelled for the front-door `political` skill, don't fake-resolve.
+      if (s.type !== "deferred" || s.kind === "political") return s;
       const r = await resolve(s.clause);
       return { ...s, tool: "agentic coordinator (validate-smart)", valid: r.value, reason: r.answer || s.reason, agentic: r };
     }),

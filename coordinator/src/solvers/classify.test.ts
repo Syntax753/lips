@@ -26,6 +26,17 @@ test("classify routes by input structure", () => {
   assert.equal(classify("is the larger of three and eight over five?").kind, "unknown");
 });
 
+test("classify tags geopolitical claims as political (web-research skill)", () => {
+  assert.equal(classify("will world war one end in 1918").kind, "political");
+  assert.equal(classify("Does UAE have more oil than the United States?").kind, "political");
+  assert.equal(classify("find someone who fought in both world war I and world war II").kind, "political");
+  assert.equal(classify("did the treaty of versailles end the war").kind, "political");
+  // A people-relation question carries no geo signal → stays unknown (connect-people territory).
+  assert.equal(classify("is jesus related to stallone").kind, "unknown");
+  // A plain word problem stays unknown, not political.
+  assert.equal(classify("is the larger of three and eight over five?").kind, "unknown");
+});
+
 test('"5 = 5" is a numeric comparison, not algebra', () => {
   assert.equal(classify("5 = 5").kind, "boolean");
 });
@@ -69,4 +80,10 @@ test("validate(unknown) defers to the agentic layer instead of guessing", () => 
   const v = validate("which character can reach everyone first?");
   assert.equal(v.kind, "unknown");
   assert.equal(v.valid, false);
+});
+
+test("validate(political) defers to the web-research skill instead of guessing", () => {
+  const v = validate("does the UAE have more oil than the United States?");
+  assert.equal(v.kind, "political");
+  assert.equal(v.valid, false); // undecided here by design — the political skill resolves it
 });

@@ -54,6 +54,11 @@ function run(input: string, c: Classification): Verdict {
     case "timeline":
       return fromTimeline(solveTimeline(JSON.parse(input)));
 
+    case "political":
+      // Needs the open web — the deterministic core can't decide it. Defer to the
+      // `political` skill (research → comparator/timeline verdict); don't guess here.
+      return { kind: "political", valid: false, witness: null, metrics: {}, reason: c.note };
+
     default:
       return { kind: "unknown", valid: false, witness: null, metrics: {}, reason: c.note };
   }

@@ -328,6 +328,15 @@ The pieces are arranged so the next phases drop in without reshaping the core:
    negative), single-variable quadratics (discriminant) and odd-degree — and
    explicitly *defers* the rest rather than guessing. e.g. `x^2 + y^2 = -1` → no
    real solution, solvable over ℂ.
-10. **More delegators & comparators** — more `cmp/` types (dates, versions, object
+10. **Geopolitical truth** *(landed)* — the `political` skill
+    (`.claude/skills/political/`): a geopolitical/factual claim (wars, treaties,
+    countries, *"more oil/GDP than"*, *"who fought in both world wars"*) is tagged
+    `political` by the classifier, then the skill web-searches the decisive fact(s)
+    and **reduces the claim to a deterministic leaf** — the `validate` comparator for
+    numbers/dates, or `reachable` for event participation — so the true/false (or
+    *indeterminate*, for predictive/contested claims) is sourced and verifiable, not a
+    guess. Search lives in the skill; the verdict stays deterministic (same split as
+    `connect-people`).
+11. **More delegators & comparators** — more `cmp/` types (dates, versions, object
     comparison by field); a fuller nonlinear solver; MCP prompts for guided
     symbolic input; multi-step proofs.
